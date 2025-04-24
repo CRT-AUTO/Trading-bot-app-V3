@@ -9,6 +9,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization"
 };
 
+// Maximum number of API call retries
+const MAX_RETRIES = 3;
+
 // Helper function to log events to the database
 async function logEvent(supabase, level, message, details, tradeId = null, botId = null, userId = null) {
   try {
@@ -30,6 +33,56 @@ async function logEvent(supabase, level, message, details, tradeId = null, botId
   } catch (e) {
     console.error('Exception logging event:', e);
   }
+}
+
+// Helper function to sleep
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper function to find the best matching PnL record
+function findBestMatchingPnl(trade, closedPnlList) {
+  // First try exact orderId match
+  const exactMatch = closedPnlList.find(pnl => pnl.orderId === trade.order_id);
+  if (exactMatch) return { match: exactMatch, matchType: 'exact_order_id' };
+  
+  // Filter by symbol
+  const symbolMatches = closedPnlList.filter(pnl => pnl.symbol === trade.symbol);
+  if (symbolMatches.length === 0) return { match: null, matchType: 'no_symbol_match' };
+  
+  // Filter by matching side 
+  // Note: If trade.side = 'Buy', the closing side in Bybit would be 'Sell' and vice versa
+  const oppositeSide = trade.side === 'Buy' ? 'Sell' : 'Buy';
+  const sideMatches = symbolMatches.filter(pnl => pnl.side === oppositeSide);
+  if (sideMatches.length === 0) return { match: null, matchType: 'no_side_match' };
+  
+  // Filter by quantity (if available)
+  if (trade.quantity) {
+    const qtyMatches = sideMatches.filter(pnl => 
+      Math.abs(parseFloat(pnl.qty) - trade.quantity) < 0.000001
+    );
+    if (qtyMatches.length > 0) {
+      // Sort by time closest to trade.created_at
+      const tradeTime = new Date(trade.created_at).getTime();
+      qtyMatches.sort((a, b) => {
+        const aTimeDiff = Math.abs(parseInt(a.createdTime) - tradeTime);
+        const bTimeDiff = Math.abs(parseInt(b.createdTime) - tradeTime);
+        return aTimeDiff - bTimeDiff;
+      });
+      return { match: qtyMatches[0], matchType: 'quantity_time_match' };
+    }
+  }
+  
+  // Final fallback - sort by time closest to trade.created_at
+  const tradeTime = new Date(trade.created_at).getTime();
+  sideMatches.sort((a, b) => {
+    const aTimeDiff = Math.abs(parseInt(a.createdTime) - tradeTime);
+    const bTimeDiff = Math.abs(parseInt(b.createdTime) - tradeTime);
+    return aTimeDiff - bTimeDiff;
+  });
+  
+  // Return the closest match by time
+  return { match: sideMatches[0], matchType: 'time_match' };
 }
 
 export default async function handler(request, context) {
@@ -242,101 +295,118 @@ export default async function handler(request, context) {
     const baseUrl = trade.bots.test_mode ? TESTNET_URL : MAINNET_URL;
     const endpoint = '/v5/position/closed-pnl';
     
-    // Signature components
-    const timestamp = String(Date.now());
-    const recvWindow = '5000';
+    // Implement retry logic with exponential backoff
+    let attempts = 0;
+    let bybitApiData = null;
     
-    // Parameters for Bybit API call
-    const params = new URLSearchParams({
-      category: 'linear',
-      symbol: trade.symbol,
-      limit: '50',  // Request more to ensure we find our order
-      timestamp,
-      recv_window: recvWindow
-    });
-    
-    // Generate HMAC SHA256 signature
-    const signatureMessage = timestamp + apiKey.api_key + recvWindow + params.toString();
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(apiKey.api_secret);
-    const messageData = encoder.encode(signatureMessage);
-    
-    const key = await crypto.subtle.importKey(
-      'raw',
-      keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
-    
-    const signature = await crypto.subtle.sign('HMAC', key, messageData);
-    const signatureHex = Array.from(new Uint8Array(signature))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    
-    // Call Bybit API
-    console.log(`Calling Bybit API: ${baseUrl}${endpoint}?${params.toString()}`);
-    const response = await fetch(`${baseUrl}${endpoint}?${params.toString()}`, {
-      method: 'GET',
-      headers: {
-        'X-BAPI-API-KEY': apiKey.api_key,
-        'X-BAPI-TIMESTAMP': timestamp,
-        'X-BAPI-RECV-WINDOW': recvWindow,
-        'X-BAPI-SIGN': signatureHex
+    while (attempts < MAX_RETRIES) {
+      try {
+        // Signature components
+        const timestamp = String(Date.now());
+        const recvWindow = '5000';
+        
+        // Parameters for Bybit API call
+        const params = new URLSearchParams({
+          category: 'linear',
+          symbol: trade.symbol,
+          limit: '50',  // Request more to ensure we find our order
+          timestamp,
+          recv_window: recvWindow
+        });
+        
+        // Calculate the time range for fallback matching (1 hour before and after trade creation)
+        const tradeTime = new Date(trade.created_at).getTime();
+        const startTime = tradeTime - (3600 * 1000); // 1 hour before
+        const endTime = tradeTime + (3600 * 1000); // 1 hour after
+        
+        // Add time filters to narrow down results for better matching
+        params.append('startTime', startTime.toString());
+        params.append('endTime', endTime.toString());
+        
+        // Generate HMAC SHA256 signature
+        const signatureMessage = timestamp + apiKey.api_key + recvWindow + params.toString();
+        const encoder = new TextEncoder();
+        const keyData = encoder.encode(apiKey.api_secret);
+        const messageData = encoder.encode(signatureMessage);
+        
+        const key = await crypto.subtle.importKey(
+          'raw',
+          keyData,
+          { name: 'HMAC', hash: 'SHA-256' },
+          false,
+          ['sign']
+        );
+        
+        const signature = await crypto.subtle.sign('HMAC', key, messageData);
+        const signatureHex = Array.from(new Uint8Array(signature))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
+        
+        // Call Bybit API
+        const apiUrl = `${baseUrl}${endpoint}?${params.toString()}`;
+        console.log(`Calling Bybit API: ${apiUrl}`);
+        
+        const response = await fetch(apiUrl, {
+          method: 'GET',
+          headers: {
+            'X-BAPI-API-KEY': apiKey.api_key,
+            'X-BAPI-TIMESTAMP': timestamp,
+            'X-BAPI-RECV-WINDOW': recvWindow,
+            'X-BAPI-SIGN': signatureHex
+          }
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`HTTP error: ${response.status} - ${errorText}`);
+          throw new Error(`HTTP error: ${response.status} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.retCode !== 0) {
+          console.error(`Bybit API error: ${data.retMsg}`);
+          throw new Error(`Bybit API error: ${data.retMsg}`);
+        }
+        
+        console.log('Bybit API response:', JSON.stringify(data));
+        bybitApiData = data;
+        break; // Success - exit retry loop
+        
+      } catch (error) {
+        attempts++;
+        console.error(`API call attempt ${attempts} failed:`, error);
+        
+        if (attempts >= MAX_RETRIES) {
+          await logEvent(
+            supabase,
+            'error',
+            'Failed to fetch closed PnL from Bybit API after multiple attempts',
+            { 
+              error: error.message,
+              attempts,
+              trade_id: tradeId
+            },
+            tradeId,
+            trade.bot_id,
+            trade.user_id
+          );
+          throw error;
+        }
+        
+        // Exponential backoff with jitter
+        const backoffTime = Math.min(1000 * Math.pow(2, attempts), 8000) + Math.random() * 1000;
+        console.log(`Retrying in ${Math.round(backoffTime)}ms...`);
+        await sleep(backoffTime);
       }
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`HTTP error: ${response.status} - ${errorText}`);
-      
-      await logEvent(
-        supabase,
-        'error',
-        'Failed to fetch closed PnL from Bybit API',
-        { 
-          status: response.status,
-          error: errorText,
-          trade_id: tradeId
-        },
-        tradeId,
-        trade.bot_id,
-        trade.user_id
-      );
-      
-      throw new Error(`HTTP error: ${response.status} - ${errorText}`);
     }
     
-    const data = await response.json();
-    
-    if (data.retCode !== 0) {
-      console.error(`Bybit API error: ${data.retMsg}`);
-      
-      await logEvent(
-        supabase,
-        'error',
-        'Bybit API returned an error',
-        { 
-          retCode: data.retCode,
-          retMsg: data.retMsg,
-          trade_id: tradeId
-        },
-        tradeId,
-        trade.bot_id,
-        trade.user_id
-      );
-      
-      throw new Error(`Bybit API error: ${data.retMsg}`);
-    }
-    
-    console.log('Bybit API response:', JSON.stringify(data));
-    
-    // Find the matching trade in closed PnL records
-    const closedPnlList = data.result.list || [];
-    const matchingPnl = closedPnlList.find(pnl => pnl.orderId === trade.order_id);
+    // Now we have the API data, find the matching trade
+    const closedPnlList = bybitApiData.result.list || [];
+    const { match: matchingPnl, matchType } = findBestMatchingPnl(trade, closedPnlList);
     
     if (!matchingPnl) {
-      console.log(`No matching closed PnL found for order ID: ${trade.order_id}`);
+      console.log(`No matching closed PnL found for trade ${tradeId}`);
       
       await logEvent(
         supabase,
@@ -344,7 +414,9 @@ export default async function handler(request, context) {
         'No matching closed PnL found in Bybit API response',
         { 
           order_id: trade.order_id,
-          bybit_response: data,
+          symbol: trade.symbol,
+          side: trade.side,
+          bybit_response: bybitApiData,
           trade_id: tradeId
         },
         tradeId,
@@ -368,12 +440,17 @@ export default async function handler(request, context) {
       );
     }
     
-    console.log(`Found matching PnL record: ${JSON.stringify(matchingPnl)}`);
+    console.log(`Found matching PnL record (${matchType}): ${JSON.stringify(matchingPnl)}`);
     
     // Extract PnL data
     const realizedPnl = parseFloat(matchingPnl.closedPnl);
     const avgEntryPrice = parseFloat(matchingPnl.avgEntryPrice);
     const avgExitPrice = parseFloat(matchingPnl.avgExitPrice);
+    const cumEntryValue = parseFloat(matchingPnl.cumEntryValue || 0);
+    const cumExitValue = parseFloat(matchingPnl.cumExitValue || 0);
+    
+    // Calculate additional metrics if needed
+    const fees = cumExitValue * 0.0006; // Approximate fee calculation (0.06%)
     
     // Update the trade with PnL data
     const { error: updateError } = await supabase
@@ -382,7 +459,11 @@ export default async function handler(request, context) {
         realized_pnl: realizedPnl,
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
-        details: matchingPnl,
+        fees: fees,
+        details: {
+          ...matchingPnl,
+          pnl_match_type: matchType
+        },
         updated_at: new Date().toISOString()
       })
       .eq('id', tradeId);
@@ -443,7 +524,8 @@ export default async function handler(request, context) {
         trade_id: tradeId,
         realized_pnl: realizedPnl,
         avg_entry_price: avgEntryPrice,
-        avg_exit_price: avgExitPrice
+        avg_exit_price: avgExitPrice,
+        match_type: matchType
       },
       tradeId,
       trade.bot_id,
@@ -456,7 +538,8 @@ export default async function handler(request, context) {
         trade_id: tradeId,
         realized_pnl: realizedPnl,
         avg_entry_price: avgEntryPrice,
-        avg_exit_price: avgExitPrice
+        avg_exit_price: avgExitPrice,
+        match_type: matchType
       }),
       {
         status: 200,
