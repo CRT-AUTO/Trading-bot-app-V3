@@ -23,6 +23,10 @@ type Trade = {
   stop_loss?: number;
   take_profit?: number;
   close_reason?: string;
+  avg_entry_price?: number;
+  avg_exit_price?: number;
+  exit_price?: number;
+  updated_at?: string;
 };
 
 const TradeHistory: React.FC = () => {
@@ -141,6 +145,24 @@ const TradeHistory: React.FC = () => {
       return sortDirection === 'asc' ? a.quantity - b.quantity : b.quantity - a.quantity;
     }
     
+    if (sortField === 'avg_entry_price') {
+      const aPrice = a.avg_entry_price || 0;
+      const bPrice = b.avg_entry_price || 0;
+      return sortDirection === 'asc' ? aPrice - bPrice : bPrice - aPrice;
+    }
+    
+    if (sortField === 'avg_exit_price') {
+      const aPrice = a.avg_exit_price || 0;
+      const bPrice = b.avg_exit_price || 0;
+      return sortDirection === 'asc' ? aPrice - bPrice : bPrice - aPrice;
+    }
+    
+    if (sortField === 'fees') {
+      const aFees = a.fees || 0;
+      const bFees = b.fees || 0;
+      return sortDirection === 'asc' ? aFees - bFees : bFees - aFees;
+    }
+    
     // Default case, sort by string fields
     const aValue = (a as any)[sortField]?.toString() || '';
     const bValue = (b as any)[sortField]?.toString() || '';
@@ -153,7 +175,11 @@ const TradeHistory: React.FC = () => {
   const exportToCsv = () => {
     if (filteredTrades.length === 0) return;
     
-    const headers = ['Date', 'Bot', 'Symbol', 'Side', 'Type', 'Price', 'Quantity', 'P/L', 'Fees', 'Status', 'State', 'Close Reason', 'Order ID'];
+    const headers = [
+      'Date', 'Bot', 'Symbol', 'Side', 'Type', 'Price', 'Quantity', 
+      'Entry Price', 'Exit Price', 'P/L', 'Fees', 
+      'Stop Loss', 'Take Profit', 'Status', 'State', 'Close Reason', 'Order ID'
+    ];
     const csvRows = [
       headers.join(','),
       ...filteredTrades.map(trade => [
@@ -164,8 +190,12 @@ const TradeHistory: React.FC = () => {
         trade.order_type,
         trade.price,
         trade.quantity,
+        trade.avg_entry_price || trade.price || '',
+        trade.avg_exit_price || trade.exit_price || '',
         trade.realized_pnl || 0,
         trade.fees || 0,
+        trade.stop_loss || '',
+        trade.take_profit || '',
         trade.status,
         trade.state || 'open',
         trade.close_reason || '',
@@ -335,15 +365,27 @@ const TradeHistory: React.FC = () => {
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('quantity')}
+                    >
+                      Qty {renderSortIndicator('quantity')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                       onClick={() => handleSort('price')}
                     >
                       Price {renderSortIndicator('price')}
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                      onClick={() => handleSort('quantity')}
+                      onClick={() => handleSort('avg_entry_price')}
                     >
-                      Quantity {renderSortIndicator('quantity')}
+                      Entry {renderSortIndicator('avg_entry_price')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('avg_exit_price')}
+                    >
+                      Exit {renderSortIndicator('avg_exit_price')}
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
@@ -353,9 +395,33 @@ const TradeHistory: React.FC = () => {
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('fees')}
+                    >
+                      Fees {renderSortIndicator('fees')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('stop_loss')}
+                    >
+                      SL {renderSortIndicator('stop_loss')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('take_profit')}
+                    >
+                      TP {renderSortIndicator('take_profit')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                       onClick={() => handleSort('state')}
                     >
                       State {renderSortIndicator('state')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('close_reason')}
+                    >
+                      Close Reason {renderSortIndicator('close_reason')}
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
@@ -372,7 +438,7 @@ const TradeHistory: React.FC = () => {
                   {sortedTrades.map((trade) => (
                     <tr key={trade.id}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {format(new Date(trade.created_at), 'MMM dd, yyyy HH:mm:ss')}
+                        {format(new Date(trade.created_at), 'MMM dd, HH:mm:ss')}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {trade.bot_name}
@@ -391,19 +457,35 @@ const TradeHistory: React.FC = () => {
                         {trade.order_type}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {trade.price.toFixed(2)}
+                        {trade.quantity}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {trade.quantity}
+                        {trade.price?.toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.avg_entry_price ? trade.avg_entry_price.toFixed(2) : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.avg_exit_price ? trade.avg_exit_price.toFixed(2) : 
+                         trade.exit_price ? trade.exit_price.toFixed(2) : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {trade.realized_pnl !== null && trade.realized_pnl !== undefined ? (
                           <span className={`font-medium ${trade.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {trade.realized_pnl.toFixed(2)} USDT
+                            {trade.realized_pnl.toFixed(2)}
                           </span>
                         ) : (
                           <span className="text-gray-400">-</span>
                         )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.fees ? trade.fees.toFixed(4) : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.stop_loss ? trade.stop_loss.toFixed(2) : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.take_profit ? trade.take_profit.toFixed(2) : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -412,6 +494,9 @@ const TradeHistory: React.FC = () => {
                           {trade.state || 'open'}
                         </span>
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.close_reason || '-'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
                           trade.status === 'Filled' ? 'bg-green-100 text-green-800' :
@@ -419,7 +504,6 @@ const TradeHistory: React.FC = () => {
                           'bg-yellow-100 text-yellow-800'
                         }`}>
                           {trade.status}
-                          {trade.close_reason ? ` (${trade.close_reason})` : ''}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
