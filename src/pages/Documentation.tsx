@@ -263,6 +263,41 @@ const Documentation: React.FC = () => {
         </div>
       </div>
       
+      <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
+        <h2 className="text-xl font-semibold mb-4">Advanced Features</h2>
+        
+        <div className="space-y-4">
+          <h3 className="font-medium text-lg">Real Profit/Loss Data</h3>
+          <p className="text-gray-700">
+            For actual trades (non-test mode), the platform automatically fetches the real profit/loss data directly from the Bybit API. This ensures that your trade history and analytics display accurate P/L figures that match your exchange account.
+          </p>
+          
+          <h3 className="font-medium text-lg mt-4">Risk Management</h3>
+          <p className="text-gray-700">
+            The platform includes built-in risk management features to help protect your capital:
+          </p>
+          <ul className="list-disc list-inside ml-4 text-gray-700 space-y-2">
+            <li><strong>Daily Loss Limit:</strong> Set a maximum amount your bot can lose in a single day before it stops trading.</li>
+            <li><strong>Maximum Position Size:</strong> Limit the size of individual trades to prevent oversized positions.</li>
+          </ul>
+          
+          <div className="flex items-start p-4 bg-blue-50 border border-blue-200 rounded-md mt-4">
+            <Bot size={20} className="text-blue-500 mr-3 mt-0.5" />
+            <div>
+              <h3 className="font-medium text-blue-800">Position Sizing Tips</h3>
+              <p className="text-sm text-blue-700 mt-1">
+                For responsible risk management, consider these position sizing guidelines:
+              </p>
+              <ul className="list-disc list-inside ml-4 text-sm text-blue-700 mt-2">
+                <li>Limit individual trades to 1-2% of your total account value</li>
+                <li>Set your daily loss limit to a maximum of 5% of your account</li>
+                <li>Always start with smaller positions when testing a new strategy</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-xl font-semibold mb-4">Bybit API Setup</h2>
         
