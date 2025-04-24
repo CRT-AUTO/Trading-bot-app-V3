@@ -446,7 +446,8 @@ export default async function handler(request, context) {
         .update({
           state: 'closed',
           close_reason: closeReason,
-          realized_pnl: realizedPnl
+          realized_pnl: realizedPnl,
+          updated_at: new Date().toISOString()
         })
         .eq('id', openTrade.id);
       
