@@ -8,6 +8,7 @@ import DashboardLayout from './layouts/DashboardLayout';
 
 // Pages
 import Dashboard from './pages/Dashboard';
+import Bots from './pages/Bots';
 import BotConfiguration from './pages/BotConfiguration';
 import TradeHistory from './pages/TradeHistory';
 import AccountSettings from './pages/AccountSettings';
@@ -43,8 +44,8 @@ function App() {
               }
             >
               <Route index element={<Dashboard />} />
-              <Route path="bots" element={<BotConfiguration />} />
-              <Route path="bots/new" element={<BotConfiguration isNew />} />
+              <Route path="bots" element={<Bots />} />
+              <Route path="bots/new" element={<BotConfiguration />} />
               <Route path="bots/:id" element={<BotConfiguration />} />
               <Route path="trades" element={<TradeHistory />} />
               <Route path="analytics" element={<Analytics />} />
