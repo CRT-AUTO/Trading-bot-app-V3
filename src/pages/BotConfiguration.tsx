@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Bot, Copy, AlertTriangle, RefreshCw, CheckCircle, XCircle, Play, Pause, Trash2 } from 'lucide-react';
+import { Bot, Copy, AlertTriangle, RefreshCw, CheckCircle, XCircle, Play, Pause, Trash2, ArrowLeft } from 'lucide-react';
 import { useSupabase } from '../contexts/SupabaseContext';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -19,12 +19,8 @@ type BotFormData = {
   max_position_size?: number;
 };
 
-interface BotConfigurationProps {
-  isNew?: boolean;
-}
-
-const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) => {
-  const { id } = useParams();
+const BotConfiguration: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { supabase } = useSupabase();
   const { user } = useAuth();
@@ -35,6 +31,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
   const [copySuccess, setCopySuccess] = useState(false);
   const [botStatus, setBotStatus] = useState<'active' | 'paused' | 'error'>('paused');
   const [generateLoading, setGenerateLoading] = useState(false);
+  const [isNew, setIsNew] = useState(id === 'new');
   
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<BotFormData>({
     defaultValues: {
@@ -146,7 +143,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
         
         // Navigate to the edit page
         navigate(`/bots/${newBot.id}`);
-      } else if (id) {
+      } else if (id && id !== 'new') {
         // Update existing bot
         const { error } = await supabase
           .from('bots')
@@ -178,7 +175,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
   };
 
   const generateWebhook = async () => {
-    if (!id || !user) return;
+    if (!id || id === 'new' || !user) return;
     
     setGenerateLoading(true);
     try {
@@ -235,7 +232,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
   };
 
   const toggleBotStatus = async () => {
-    if (!id || !user) return;
+    if (!id || id === 'new' || !user) return;
     
     const newStatus = botStatus === 'active' ? 'paused' : 'active';
     
@@ -256,7 +253,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
   };
 
   const deleteBot = async () => {
-    if (!id || !user || !confirm('Are you sure you want to delete this bot?')) return;
+    if (!id || id === 'new' || !user || !confirm('Are you sure you want to delete this bot?')) return;
     
     try {
       // Delete webhooks first
@@ -299,10 +296,19 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold flex items-center">
-          <Bot className="mr-2" />
-          {isNew ? 'Create New Bot' : 'Edit Bot'}
-        </h1>
+        <div className="flex items-center">
+          <button
+            onClick={() => navigate('/bots')}
+            className="mr-4 p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <h1 className="text-2xl font-bold flex items-center">
+            <Bot className="mr-2" />
+            {isNew ? 'Create New Bot' : 'Edit Bot'}
+          </h1>
+        </div>
+        
         {!isNew && (
           <div className="flex gap-2">
             <button
