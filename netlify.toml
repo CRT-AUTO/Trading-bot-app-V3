@@ -41,3 +41,9 @@
 [[edge_functions]]
   path = "/.netlify/functions/updateTradePnl"
   function = "updateTradePnl.edge"
+  
+# Schedule automated log cleanup
+[[scheduled_functions]]
+  name = "delete-old-logs"
+  schedule = "@daily"
+  command = "netlify/functions/deleteOldLogs.mjs"
