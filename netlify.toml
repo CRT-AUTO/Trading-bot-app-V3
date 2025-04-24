@@ -37,3 +37,7 @@
 [[edge_functions]]
   path = "/.netlify/functions/generateWebhook"
   function = "generateWebhook.edge"
+  
+[[edge_functions]]
+  path = "/.netlify/functions/updateTradePnl"
+  function = "updateTradePnl.edge"
