@@ -32,6 +32,36 @@ async function logEvent(supabase, level, message, details, webhookId = null, bot
   }
 }
 
+// Function to update trade PnL via the updateTradePnl edge function
+async function updateTradePnl(tradeId, request) {
+  try {
+    const url = new URL(request.url);
+    const baseUrl = `${url.protocol}//${url.host}`;
+    const updatePnlUrl = `${baseUrl}/.netlify/functions/updateTradePnl`;
+    
+    console.log(`Triggering PnL update for trade ${tradeId} at ${updatePnlUrl}`);
+    
+    const response = await fetch(updatePnlUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ tradeId })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to update PnL: ${response.status} ${await response.text()}`);
+    }
+    
+    const result = await response.json();
+    console.log(`PnL update result:`, result);
+    return result;
+  } catch (error) {
+    console.error(`Error updating trade PnL:`, error);
+    throw error;
+  }
+}
+
 export default async function handler(request, context) {
   console.log("Edge Function: processAlert started");
   
@@ -495,6 +525,32 @@ export default async function handler(request, context) {
             webhook.bot_id,
             webhook.user_id
           );
+        }
+      }
+      
+      // If this is a real trade (not test mode), trigger PnL update from Bybit API
+      if (!bot.test_mode) {
+        try {
+          console.log("Triggering PnL update from Bybit API");
+          const pnlUpdateResult = await updateTradePnl(openTrade.id, request);
+          console.log("PnL update result:", pnlUpdateResult);
+        } catch (error) {
+          console.error("Error updating PnL from Bybit API:", error);
+          
+          await logEvent(
+            supabase,
+            'error',
+            'Failed to update PnL from Bybit API',
+            { 
+              error: error.message,
+              trade_id: openTrade.id
+            },
+            webhook.id,
+            webhook.bot_id,
+            webhook.user_id
+          );
+          
+          // Continue processing - this is a non-fatal error
         }
       }
       
