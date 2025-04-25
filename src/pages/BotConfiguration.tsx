@@ -17,6 +17,10 @@ type BotFormData = {
   description: string;
   daily_loss_limit?: number;
   max_position_size?: number;
+  position_sizing_enabled: boolean;
+  risk_per_trade: number;
+  market_fee_percentage: number;
+  limit_fee_percentage: number;
 };
 
 const BotConfiguration: React.FC = () => {
@@ -46,10 +50,15 @@ const BotConfiguration: React.FC = () => {
       description: '',
       daily_loss_limit: 0,
       max_position_size: 0,
+      position_sizing_enabled: false,
+      risk_per_trade: 10,
+      market_fee_percentage: 0.075,
+      limit_fee_percentage: 0.025,
     }
   });
 
   const watchTestMode = watch('test_mode');
+  const watchPositionSizingEnabled = watch('position_sizing_enabled');
 
   // Fetch bot data if editing
   useEffect(() => {
@@ -81,6 +90,10 @@ const BotConfiguration: React.FC = () => {
           setValue('description', botData.description || '');
           setValue('daily_loss_limit', botData.daily_loss_limit || 0);
           setValue('max_position_size', botData.max_position_size || 0);
+          setValue('position_sizing_enabled', botData.position_sizing_enabled || false);
+          setValue('risk_per_trade', botData.risk_per_trade || 10);
+          setValue('market_fee_percentage', botData.market_fee_percentage || 0.075);
+          setValue('limit_fee_percentage', botData.limit_fee_percentage || 0.025);
           
           // Set bot status
           setBotStatus(botData.status || 'paused');
@@ -133,6 +146,10 @@ const BotConfiguration: React.FC = () => {
             description: data.description,
             daily_loss_limit: data.daily_loss_limit || null,
             max_position_size: data.max_position_size || null,
+            position_sizing_enabled: data.position_sizing_enabled,
+            risk_per_trade: data.risk_per_trade || 10,
+            market_fee_percentage: data.market_fee_percentage || 0.075,
+            limit_fee_percentage: data.limit_fee_percentage || 0.025,
             status: 'paused',
             created_at: new Date().toISOString()
           })
@@ -159,6 +176,10 @@ const BotConfiguration: React.FC = () => {
             description: data.description,
             daily_loss_limit: data.daily_loss_limit || null,
             max_position_size: data.max_position_size || null,
+            position_sizing_enabled: data.position_sizing_enabled,
+            risk_per_trade: data.risk_per_trade || 10,
+            market_fee_percentage: data.market_fee_percentage || 0.075,
+            limit_fee_percentage: data.limit_fee_percentage || 0.025,
             updated_at: new Date().toISOString()
           })
           .eq('id', id)
@@ -433,6 +454,97 @@ const BotConfiguration: React.FC = () => {
                 {...register('default_take_profit', { valueAsNumber: true })}
               />
             </div>
+          </div>
+
+          {/* Position Sizing Settings */}
+          <div className="mb-6">
+            <h3 className="text-lg font-medium text-gray-800 mb-3">Position Sizing</h3>
+            
+            <div className="mb-4">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="position_sizing_enabled"
+                  className="h-4 w-4 text-blue-600 rounded"
+                  {...register('position_sizing_enabled')}
+                />
+                <label htmlFor="position_sizing_enabled" className="ml-2 block text-sm text-gray-700">
+                  Enable Automatic Position Sizing
+                </label>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                When enabled, the bot will calculate position size based on risk amount and stop loss level.
+              </p>
+            </div>
+            
+            {watchPositionSizingEnabled && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-blue-50 border border-blue-100 rounded-md">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Risk Per Trade (USDT)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="10"
+                    {...register('risk_per_trade', { 
+                      valueAsNumber: true,
+                      min: { value: 0, message: 'Risk amount must be positive' } 
+                    })}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Maximum amount to risk per trade, including fees.
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Market Fee (%)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      min="0"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      placeholder="0.075"
+                      {...register('market_fee_percentage', { 
+                        valueAsNumber: true,
+                        min: { value: 0, message: 'Fee must be positive' } 
+                      })}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Limit Fee (%)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      min="0"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      placeholder="0.025"
+                      {...register('limit_fee_percentage', { 
+                        valueAsNumber: true,
+                        min: { value: 0, message: 'Fee must be positive' } 
+                      })}
+                    />
+                  </div>
+                </div>
+                
+                <div className="md:col-span-2">
+                  <div className="flex items-start p-3 bg-yellow-50 border border-yellow-100 rounded-md">
+                    <AlertTriangle size={16} className="text-yellow-600 mr-2 mt-0.5" />
+                    <p className="text-sm text-yellow-700">
+                      Position sizing requires a stop loss value in your TradingView alerts. If no stop loss is provided, the default quantity will be used.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Risk Management Settings */}
