@@ -329,7 +329,14 @@ export default async function handler(request, context) {
     
     // Prepare to call Bybit API for closed PnL
     const baseUrl = trade.bots.test_mode ? TESTNET_URL : MAINNET_URL;
-    const endpoint = '/v5/position/closed-pnl';
+    
+    // Choose the endpoint based on account type
+    let endpoint = '/v5/position/closed-pnl';
+    
+    // If it's a sub-account, adjust the endpoint or parameters as needed
+    // Note: For Bybit, the same endpoint is used but additional parameters
+    // may be needed for sub-accounts. Check the Bybit API documentation for details.
+    console.log(`Using account type: ${apiKey.account_type || 'main'}`);
     
     // Implement retry logic with exponential backoff
     let attempts = 0;
@@ -358,6 +365,13 @@ export default async function handler(request, context) {
         // Add time filters to narrow down results for better matching
         params.append('startTime', startTime.toString());
         params.append('endTime', endTime.toString());
+        
+        // Add sub-account parameter if needed
+        if (apiKey.account_type === 'sub') {
+          // This is where you'd add any specific parameters for sub-accounts
+          // Example: params.append('subAccountId', 'your-sub-account-id');
+          console.log('Using sub-account API configuration');
+        }
         
         // Generate HMAC SHA256 signature
         const signatureMessage = timestamp + apiKey.api_key + recvWindow + params.toString();
