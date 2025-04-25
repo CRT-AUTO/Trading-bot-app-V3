@@ -1,6 +1,7 @@
 // Netlify Edge Function for processing TradingView alerts
 import { createClient } from '@supabase/supabase-js';
 import { executeBybitOrder, MAINNET_URL, TESTNET_URL } from './utils/bybit.edge.mjs';
+import { calculatePositionSize } from './utils/positionSizing.edge.mjs';
 
 // CORS headers to include in all responses
 const corsHeaders = {
@@ -659,47 +660,6 @@ export default async function handler(request, context) {
           console.log(`Daily P/L check passed: ${dailyPnL} / limit ${bot.daily_loss_limit}`);
         }
       }
-      
-      // Check max position size
-      const rawQty = parseFloat(alertData.quantity ?? bot.default_quantity ?? 0);
-      const estPrice = parseFloat(alertData.price ?? 0);
-      
-      if (bot.max_position_size > 0 && estPrice > 0) {
-        const estimatedPositionSize = rawQty * estPrice;
-        if (estimatedPositionSize > bot.max_position_size) {
-          console.log(`Position size exceeded: ${estimatedPositionSize} > ${bot.max_position_size}`);
-          
-          await logEvent(
-            supabase,
-            'warning',
-            'Trade rejected: Position size exceeds maximum allowed',
-            { 
-              position_size: estimatedPositionSize,
-              limit: bot.max_position_size 
-            },
-            webhook.id,
-            webhook.bot_id,
-            webhook.user_id
-          );
-          
-          return new Response(
-            JSON.stringify({ 
-              error: 'Position size exceeds maximum allowed', 
-              positionSize: estimatedPositionSize,
-              limit: bot.max_position_size 
-            }),
-            {
-              status: 403,
-              headers: {
-                ...corsHeaders,
-                "Content-Type": "application/json"
-              }
-            }
-          );
-        }
-        
-        console.log(`Position size check passed: ${estimatedPositionSize} / limit ${bot.max_position_size}`);
-      }
     }
 
     // ─────── MIN QTY FETCH & ROUND ───────
@@ -737,16 +697,170 @@ export default async function handler(request, context) {
       const minQty = parseFloat(minQtyStr);
       const step = parseFloat(stepStr);
       const decimals = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
-      const rawQty = parseFloat(alertData.quantity ?? bot.default_quantity ?? 0);
-      let qty = rawQty < minQty
-        ? minQty
-        : Math.floor(rawQty / step) * step;
-      if (qty < minQty) qty = minQty;
-      const adjustedQty = parseFloat(qty.toFixed(decimals));
-      console.log(
-        `Adjusted quantity from ${rawQty} → ${adjustedQty}` +
-        ` (minQty=${minQty}, step=${step})`
-      );
+      
+      // ─────── CALCULATE POSITION SIZE ───────
+      let adjustedQty;
+      
+      // Check if position sizing is enabled and we have stop loss info
+      if (bot.position_sizing_enabled && (alertData.stopLoss || bot.default_stop_loss)) {
+        console.log("Position sizing enabled, calculating position size...");
+        
+        try {
+          // Get necessary values
+          const entryPrice = parseFloat(alertData.price) || null;
+          const stopLoss = parseFloat(alertData.stopLoss) || null;
+          const side = alertData.side || bot.default_side || 'Buy';
+          
+          // If we don't have an entry price, we can try to fetch the current market price
+          let marketPrice = entryPrice;
+          if (!marketPrice) {
+            try {
+              // Fetch current market price
+              const tickerRes = await fetch(
+                `${baseUrl}/v5/market/tickers?symbol=${symbol}&category=linear`
+              );
+              const tickerJson = await tickerRes.json();
+              if (tickerJson.retCode === 0 && tickerJson.result.list.length > 0) {
+                marketPrice = parseFloat(tickerJson.result.list[0].lastPrice);
+                console.log(`Fetched current market price for ${symbol}: ${marketPrice}`);
+              }
+            } catch (priceError) {
+              console.error('Error fetching current market price:', priceError);
+            }
+          }
+          
+          // Calculate stop loss price if percentage is provided
+          let stopLossPrice = stopLoss;
+          if (!stopLossPrice && marketPrice && bot.default_stop_loss) {
+            // Calculate stop loss based on percentage
+            if (side === 'Buy') {
+              stopLossPrice = marketPrice * (1 - (bot.default_stop_loss / 100));
+            } else {
+              stopLossPrice = marketPrice * (1 + (bot.default_stop_loss / 100));
+            }
+            console.log(`Calculated stop loss price from percentage: ${stopLossPrice}`);
+          }
+          
+          // Only proceed if we have both entry and stop loss prices
+          if (marketPrice && stopLossPrice) {
+            // Determine the fee percentage to use
+            const feePercentage = 
+              alertData.orderType === 'Limit' ? bot.limit_fee_percentage : bot.market_fee_percentage;
+            
+            // Calculate position size
+            const calculatedQty = calculatePositionSize({
+              entryPrice: marketPrice,
+              stopLoss: stopLossPrice,
+              riskAmount: bot.risk_per_trade,
+              side,
+              feePercentage,
+              minQty,
+              qtyStep: step,
+              maxPositionSize: bot.max_position_size || 0,
+              decimals
+            });
+            
+            console.log(`Position sizing calculation complete. Result: ${calculatedQty}`);
+            adjustedQty = calculatedQty;
+            
+            await logEvent(
+              supabase,
+              'info',
+              'Position size calculated based on risk parameters',
+              { 
+                entryPrice: marketPrice,
+                stopLoss: stopLossPrice,
+                riskAmount: bot.risk_per_trade,
+                side,
+                feePercentage,
+                minQty,
+                qtyStep: step,
+                maxPositionSize: bot.max_position_size,
+                calculatedQuantity: calculatedQty
+              },
+              webhook.id,
+              webhook.bot_id,
+              webhook.user_id
+            );
+          } else {
+            console.log("Missing required price data for position sizing, using default quantity adjustment");
+            // Fall back to default quantity adjustment
+            const rawQty = parseFloat(alertData.quantity ?? bot.default_quantity ?? 0);
+            adjustedQty = rawQty < minQty
+              ? minQty
+              : Math.floor(rawQty / step) * step;
+          }
+        } catch (positionSizingError) {
+          console.error("Error calculating position size:", positionSizingError);
+          
+          await logEvent(
+            supabase,
+            'error',
+            'Position sizing calculation failed, using default quantity',
+            { error: positionSizingError.message },
+            webhook.id,
+            webhook.bot_id,
+            webhook.user_id
+          );
+          
+          // Fall back to default quantity adjustment
+          const rawQty = parseFloat(alertData.quantity ?? bot.default_quantity ?? 0);
+          adjustedQty = rawQty < minQty
+            ? minQty
+            : Math.floor(rawQty / step) * step;
+        }
+      } else {
+        // Position sizing disabled, use the default quantity adjustment
+        console.log("Position sizing disabled, using default quantity adjustment");
+        const rawQty = parseFloat(alertData.quantity ?? bot.default_quantity ?? 0);
+        adjustedQty = rawQty < minQty
+          ? minQty
+          : Math.floor(rawQty / step) * step;
+      }
+      
+      // Ensure minimum quantity
+      if (adjustedQty < minQty) {
+        adjustedQty = minQty;
+      }
+      
+      // Apply precision based on decimals
+      adjustedQty = parseFloat(adjustedQty.toFixed(decimals));
+      
+      console.log(`Final adjusted quantity: ${adjustedQty}`);
+      
+      // Check against max position size if specified
+      if (bot.max_position_size > 0) {
+        const estPrice = parseFloat(alertData.price) || 0;
+        if (estPrice > 0) {
+          const estimatedPositionSize = adjustedQty * estPrice;
+          if (estimatedPositionSize > bot.max_position_size) {
+            console.log(`Position size exceeded: ${estimatedPositionSize} > ${bot.max_position_size}`);
+            
+            // Adjust quantity to respect max position size
+            adjustedQty = (bot.max_position_size / estPrice);
+            // Round down to step size
+            adjustedQty = Math.floor(adjustedQty / step) * step;
+            // Apply precision
+            adjustedQty = parseFloat(adjustedQty.toFixed(decimals));
+            
+            console.log(`Adjusted quantity to respect max position size: ${adjustedQty}`);
+            
+            await logEvent(
+              supabase,
+              'warning',
+              'Position size reduced to respect maximum allowed',
+              { 
+                original_position_size: estimatedPositionSize,
+                limit: bot.max_position_size,
+                adjusted_quantity: adjustedQty
+              },
+              webhook.id,
+              webhook.bot_id,
+              webhook.user_id
+            );
+          }
+        }
+      }
 
       // ─────── BUILD ORDER PARAMS ───────
       // Get stop loss and take profit values from alert or bot defaults
