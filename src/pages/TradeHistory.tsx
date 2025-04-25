@@ -43,60 +43,102 @@ const TradeHistory: React.FC = () => {
   const [totalPnl, setTotalPnl] = useState(0);
   const [sortField, setSortField] = useState<string>('created_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [updatingTradeId, setUpdatingTradeId] = useState<string | null>(null);
+
+  const fetchTradeHistory = async () => {
+    if (!user) return;
+    
+    setLoading(true);
+    try {
+      // Fetch trade history with bot names
+      const { data, error } = await supabase
+        .from('trades')
+        .select(`
+          *,
+          bots:bot_id (name)
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      // Map to include bot name directly in trade object
+      const tradesWithBotNames = data?.map(trade => ({
+        ...trade,
+        bot_name: trade.bots?.name || 'Unknown'
+      })) || [];
+      
+      setTrades(tradesWithBotNames);
+      
+      // Calculate total PnL
+      const total = tradesWithBotNames.reduce((sum, trade) => {
+        return sum + (trade.realized_pnl || 0);
+      }, 0);
+      setTotalPnl(total);
+      
+      // Extract unique symbols and bots for filters
+      const symbols = [...new Set(tradesWithBotNames.map(trade => trade.symbol))];
+      setUniqueSymbols(symbols);
+      
+      const bots = tradesWithBotNames.reduce((acc: {id: string; name: string}[], trade) => {
+        if (trade.bot_id && !acc.some(bot => bot.id === trade.bot_id)) {
+          acc.push({ id: trade.bot_id, name: trade.bot_name });
+        }
+        return acc;
+      }, []);
+      setUniqueBots(bots);
+      
+    } catch (error) {
+      console.error('Error fetching trade history:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchTradeHistory = async () => {
-      if (!user) return;
-      
-      setLoading(true);
-      try {
-        // Fetch trade history with bot names
-        const { data, error } = await supabase
-          .from('trades')
-          .select(`
-            *,
-            bots:bot_id (name)
-          `)
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-        
-        // Map to include bot name directly in trade object
-        const tradesWithBotNames = data?.map(trade => ({
-          ...trade,
-          bot_name: trade.bots?.name || 'Unknown'
-        })) || [];
-        
-        setTrades(tradesWithBotNames);
-        
-        // Calculate total PnL
-        const total = tradesWithBotNames.reduce((sum, trade) => {
-          return sum + (trade.realized_pnl || 0);
-        }, 0);
-        setTotalPnl(total);
-        
-        // Extract unique symbols and bots for filters
-        const symbols = [...new Set(tradesWithBotNames.map(trade => trade.symbol))];
-        setUniqueSymbols(symbols);
-        
-        const bots = tradesWithBotNames.reduce((acc: {id: string; name: string}[], trade) => {
-          if (trade.bot_id && !acc.some(bot => bot.id === trade.bot_id)) {
-            acc.push({ id: trade.bot_id, name: trade.bot_name });
-          }
-          return acc;
-        }, []);
-        setUniqueBots(bots);
-        
-      } catch (error) {
-        console.error('Error fetching trade history:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchTradeHistory();
   }, [supabase, user]);
+
+  // Function to manually update trade PnL
+  const handleManualUpdate = async (trade: Trade) => {
+    if (trade.state === 'open') {
+      alert('This trade is still open and cannot be updated.');
+      return;
+    }
+
+    try {
+      setUpdatingTradeId(trade.id);
+      
+      // Call the updateTradePnl edge function
+      const response = await fetch('/.netlify/functions/updateTradePnl', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tradeId: trade.id }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to update trade PnL:', errorText);
+        alert(`Failed to update trade PnL: ${errorText}`);
+        return;
+      }
+      
+      const result = await response.json();
+      console.log('Trade PnL updated successfully:', result);
+      
+      // Refresh trade history to reflect the updated PnL
+      await fetchTradeHistory();
+      
+      alert('Trade PnL updated successfully!');
+    } catch (error) {
+      console.error('Error updating trade PnL:', error);
+      alert(`Error updating trade PnL: ${error}`);
+    } finally {
+      setUpdatingTradeId(null);
+    }
+  };
 
   // Sort trades
   const handleSort = (field: string) => {
@@ -432,6 +474,9 @@ const TradeHistory: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Order ID
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -508,6 +553,24 @@ const TradeHistory: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
                         {trade.order_id.substring(0, 8)}...
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        {trade.state !== 'close' && (
+                          <button
+                            onClick={() => handleManualUpdate(trade)}
+                            disabled={updatingTradeId === trade.id}
+                            className={`text-blue-600 hover:text-blue-900 ${updatingTradeId === trade.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            {updatingTradeId === trade.id ? (
+                              <span className="flex items-center">
+                                <RefreshCw size={14} className="animate-spin mr-1" /> 
+                                Updating...
+                              </span>
+                            ) : (
+                              'Update PnL'
+                            )}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
