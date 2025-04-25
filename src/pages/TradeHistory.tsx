@@ -102,15 +102,15 @@ const TradeHistory: React.FC = () => {
   // Function to manually update trade PnL
   const handleManualUpdate = async (trade: Trade) => {
     if (trade.state !== 'open') {
-      alert('This trade is still open and cannot be updated.');
+      alert('This trade is already closed and cannot be updated.');
       return;
     }
 
     try {
       setUpdatingTradeId(trade.id);
       
-      // Call the updateTradePnl edge function
-      const response = await fetch('/.netlify/functions/updateTradePnl', {
+      // Call the manualUpdateTradePnl edge function
+      const response = await fetch('/.netlify/functions/manualUpdateTradePnl', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,10 +126,10 @@ const TradeHistory: React.FC = () => {
       }
       
       const result = await response.json();
-      console.log('Trade PnL updated result:', result);
+      console.log('Trade PnL manual update result:', result);
       
       if (!result.success && result.message === "No matching closed PnL found") {
-        alert('No matching closed PnL found for this trade.');
+        alert('No matching closed PnL found for this trade. The trade may still be open on the exchange or the data is not yet available from the API.');
         return;
       }
       
