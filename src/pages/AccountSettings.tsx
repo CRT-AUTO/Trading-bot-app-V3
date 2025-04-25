@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 type ApiKeyFormData = {
   api_key: string;
   api_secret: string;
+  account_type: 'main' | 'sub';
 };
 
 type PasswordFormData = {
@@ -30,7 +31,8 @@ const AccountSettings: React.FC = () => {
   const apiKeyForm = useForm<ApiKeyFormData>({
     defaultValues: {
       api_key: '',
-      api_secret: ''
+      api_secret: '',
+      account_type: 'main'
     }
   });
   
@@ -64,6 +66,7 @@ const AccountSettings: React.FC = () => {
         if (data) {
           setApiKeyValue('api_key', data.api_key || '');
           setApiKeyValue('api_secret', data.api_secret || '');
+          setApiKeyValue('account_type', data.account_type || 'main');
         }
       } catch (error) {
         console.error('Error fetching API keys:', error);
@@ -98,6 +101,7 @@ const AccountSettings: React.FC = () => {
           .update({
             api_key: data.api_key,
             api_secret: data.api_secret,
+            account_type: data.account_type,
             updated_at: new Date().toISOString()
           })
           .eq('id', existingKey.id);
@@ -112,6 +116,7 @@ const AccountSettings: React.FC = () => {
             exchange: 'bybit',
             api_key: data.api_key,
             api_secret: data.api_secret,
+            account_type: data.account_type,
             created_at: new Date().toISOString()
           });
           
@@ -197,6 +202,20 @@ const AccountSettings: React.FC = () => {
                 placeholder="Enter your Bybit API secret"
                 {...registerApiKey('api_secret', { required: true })}
               />
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Account Type</label>
+              <select
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                {...registerApiKey('account_type')}
+              >
+                <option value="main">Main Account</option>
+                <option value="sub">Sub Account</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Select "Sub Account" if you are using a Bybit sub-account API key.
+              </p>
             </div>
             
             <div className="mb-6">
