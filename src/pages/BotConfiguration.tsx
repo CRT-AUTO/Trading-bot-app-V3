@@ -698,7 +698,8 @@ const BotConfiguration: React.FC = () => {
   "quantity": 0.001,
   "price": 50000,
   "stopLoss": 49000,
-  "takeProfit": 52000
+  "takeProfit": 52000,
+  "state": "open"
 }`}
             </pre>
             <p className="mt-2 text-sm text-blue-700">
