@@ -35,6 +35,13 @@ const Documentation: React.FC = () => {
   "quantity": {{strategy.position_size}},
   "state": "{{if(strategy.position_size > 0, 'open', 'close')}}"
 }`,
+    positionSizingAlert: `{
+  "symbol": "BTCUSDT",
+  "side": "Buy",
+  "price": 50000, 
+  "stopLoss": 49000,
+  "state": "open"
+}`
   };
 
   return (
@@ -153,6 +160,24 @@ const Documentation: React.FC = () => {
             </button>
           </div>
           
+          <h3 className="font-medium text-lg mt-6">Position Sizing Format</h3>
+          <p className="text-gray-700 mb-2">
+            If you've enabled position sizing on your bot, your alert must include at least the stopLoss value:
+          </p>
+          
+          <div className="relative">
+            <pre className="bg-gray-800 text-gray-200 p-4 rounded-md text-sm overflow-x-auto">
+              {codeSnippets.positionSizingAlert}
+            </pre>
+            <button
+              onClick={() => copyToClipboard(codeSnippets.positionSizingAlert, 'positionSizing')}
+              className="absolute top-2 right-2 p-1.5 bg-gray-700 text-gray-200 rounded-md hover:bg-gray-600 transition-colors"
+              aria-label="Copy code"
+            >
+              {copySuccess['positionSizing'] ? <CheckCircle size={16} /> : <Copy size={16} />}
+            </button>
+          </div>
+          
           <div className="flex items-start p-4 bg-blue-50 border border-blue-200 rounded-md mt-4">
             <Bot size={20} className="text-blue-500 mr-3 mt-0.5" />
             <div>
@@ -239,6 +264,21 @@ const Documentation: React.FC = () => {
                   <td className="px-6 py-4">0 (disabled)</td>
                 </tr>
                 <tr className="border-b">
+                  <td className="px-6 py-4 font-medium">Position Sizing</td>
+                  <td className="px-6 py-4">Automatically calculate position size based on risk</td>
+                  <td className="px-6 py-4">Disabled</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-6 py-4 font-medium">Risk Per Trade</td>
+                  <td className="px-6 py-4">Maximum USDT amount to risk on each trade</td>
+                  <td className="px-6 py-4">10 USDT</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="px-6 py-4 font-medium">Market/Limit Fee %</td>
+                  <td className="px-6 py-4">Fee percentages for order types</td>
+                  <td className="px-6 py-4">0.075% / 0.025%</td>
+                </tr>
+                <tr className="border-b">
                   <td className="px-6 py-4 font-medium">Daily Loss Limit</td>
                   <td className="px-6 py-4">Maximum loss allowed in a single day</td>
                   <td className="px-6 py-4">0 (no limit)</td>
@@ -267,7 +307,36 @@ const Documentation: React.FC = () => {
         <h2 className="text-xl font-semibold mb-4">Advanced Features</h2>
         
         <div className="space-y-4">
-          <h3 className="font-medium text-lg">Real Profit/Loss Data</h3>
+          <h3 className="font-medium text-lg">Automatic Position Sizing</h3>
+          <p className="text-gray-700">
+            The platform includes powerful position sizing capabilities to help manage your risk consistently:
+          </p>
+          <ul className="list-disc list-inside ml-4 text-gray-700 space-y-2">
+            <li><strong>Risk-Based Sizing:</strong> Set a fixed USDT amount to risk per trade. The system calculates position size based on the difference between entry and stop loss.</li>
+            <li><strong>Fee Integration:</strong> Position sizing accounts for trading fees to ensure accurate risk calculation.</li>
+            <li><strong>Exchange Compliance:</strong> Final position sizes are always adjusted to comply with exchange minimum quantity and step size requirements.</li>
+            <li><strong>Maximum Controls:</strong> Position sizing respects your maximum position size settings for additional risk management.</li>
+          </ul>
+          
+          <div className="flex items-start p-4 bg-blue-50 border border-blue-200 rounded-md mt-4">
+            <Bot size={20} className="text-blue-500 mr-3 mt-0.5" />
+            <div>
+              <h3 className="font-medium text-blue-800">Position Sizing Requirements</h3>
+              <p className="text-sm text-blue-700 mt-1">
+                For position sizing to work properly, your TradingView alerts must include:
+              </p>
+              <ul className="list-disc list-inside ml-4 text-sm text-blue-700 mt-2">
+                <li>A <code>stopLoss</code> value (exact price, not percentage)</li>
+                <li>The <code>side</code> of the trade (Buy/Sell)</li>
+                <li>Ideally, the current <code>price</code> for more accurate calculations</li>
+              </ul>
+              <p className="text-sm text-blue-700 mt-2">
+                Without these values, the system will fall back to using your default quantity settings.
+              </p>
+            </div>
+          </div>
+          
+          <h3 className="font-medium text-lg mt-4">Real Profit/Loss Data</h3>
           <p className="text-gray-700">
             For actual trades (non-test mode), the platform automatically fetches the real profit/loss data directly from the Bybit API. This ensures that your trade history and analytics display accurate P/L figures that match your exchange account.
           </p>
