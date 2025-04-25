@@ -101,7 +101,7 @@ const TradeHistory: React.FC = () => {
 
   // Function to manually update trade PnL
   const handleManualUpdate = async (trade: Trade) => {
-    if (trade.state === 'open') {
+    if (trade.state !== 'open') {
       alert('This trade is still open and cannot be updated.');
       return;
     }
@@ -126,7 +126,12 @@ const TradeHistory: React.FC = () => {
       }
       
       const result = await response.json();
-      console.log('Trade PnL updated successfully:', result);
+      console.log('Trade PnL updated result:', result);
+      
+      if (!result.success && result.message === "No matching closed PnL found") {
+        alert('No matching closed PnL found for this trade.');
+        return;
+      }
       
       // Refresh trade history to reflect the updated PnL
       await fetchTradeHistory();
@@ -555,7 +560,7 @@ const TradeHistory: React.FC = () => {
                         {trade.order_id.substring(0, 8)}...
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        {trade.state !== 'close' && (
+                        {trade.state === 'open' && (
                           <button
                             onClick={() => handleManualUpdate(trade)}
                             disabled={updatingTradeId === trade.id}
