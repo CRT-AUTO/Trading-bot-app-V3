@@ -1,6 +1,7 @@
 // Netlify Edge Function for updating trade PnL data from Bybit API
 import { createClient } from '@supabase/supabase-js';
 import { MAINNET_URL, TESTNET_URL } from './utils/bybit.edge.mjs';
+import { calculateTradeMetrics } from './utils/tradeMetrics.edge.mjs';
 
 // CORS headers to include in all responses
 const corsHeaders = {
@@ -466,6 +467,66 @@ export default async function handler(request, context) {
     // Calculate additional metrics if needed
     const fees = cumExitValue * 0.0006; // Approximate fee calculation (0.06%)
     
+    // Calculate trade metrics
+    let tradeMetrics = null;
+    try {
+      // Get necessary data for trade metrics calculation
+      const plannedEntry = trade.price || 0;
+      const actualEntry = avgEntryPrice || trade.price || 0;
+      const takeProfit = trade.take_profit || 0;
+      const stopLoss = trade.stop_loss || 0;
+      const maxRisk = trade.bots?.risk_per_trade || 10; // Default to 10 USDT if not set
+      const openFee = trade.fees || 0; // Use existing fees or assume 0
+      const closeTime = Date.now();
+      const openTime = new Date(trade.created_at).getTime();
+      
+      // Calculate trade metrics
+      tradeMetrics = calculateTradeMetrics({
+        symbol: trade.symbol,
+        side: trade.side,
+        plannedEntry,
+        actualEntry,
+        takeProfit,
+        stopLoss,
+        maxRisk,
+        finishedDollar: realizedPnl,
+        openFee,
+        closeFee: fees,
+        openTime,
+        closeTime,
+      });
+      
+      console.log('Trade metrics calculated:', tradeMetrics);
+      
+      await logEvent(
+        supabase,
+        'info',
+        'Trade metrics calculated successfully',
+        { 
+          trade_id: tradeId,
+          metrics: tradeMetrics
+        },
+        tradeId,
+        trade.bot_id,
+        trade.user_id
+      );
+    } catch (error) {
+      console.error('Error calculating trade metrics:', error);
+      
+      await logEvent(
+        supabase,
+        'error',
+        'Failed to calculate trade metrics',
+        { 
+          error: error.message,
+          trade_id: tradeId
+        },
+        tradeId,
+        trade.bot_id,
+        trade.user_id
+      );
+    }
+    
     // Update the trade with PnL data
     const { error: updateError } = await supabase
       .from('trades')
@@ -478,6 +539,7 @@ export default async function handler(request, context) {
           ...matchingPnl,
           pnl_match_type: matchType
         },
+        trade_metrics: tradeMetrics,
         updated_at: new Date().toISOString()
       })
       .eq('id', tradeId);
