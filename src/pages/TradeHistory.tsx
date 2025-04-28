@@ -4,6 +4,19 @@ import { useAuth } from '../contexts/AuthContext';
 import { format } from 'date-fns';
 import { RefreshCw, Search, Filter, Download, ArrowUp, ArrowDown } from 'lucide-react';
 
+type TradeMetrics = {
+  targetRR: number;
+  finishedRR: number;
+  slippage: number;
+  formattedTradeTime: string;
+  totalTradeTimeSeconds: number;
+  deviationPercentFromMaxRisk: number;
+  totalFees: number;
+  maxRisk: number;
+  positionNotional: number;
+  riskPerUnit: number;
+};
+
 type Trade = {
   id: string;
   bot_id: string;
@@ -27,6 +40,7 @@ type Trade = {
   avg_exit_price?: number;
   exit_price?: number;
   updated_at?: string;
+  trade_metrics?: TradeMetrics;
 };
 
 const TradeHistory: React.FC = () => {
@@ -44,6 +58,8 @@ const TradeHistory: React.FC = () => {
   const [sortField, setSortField] = useState<string>('created_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [updatingTradeId, setUpdatingTradeId] = useState<string | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
+  const [showMetricsModal, setShowMetricsModal] = useState(false);
 
   const fetchTradeHistory = async () => {
     if (!user) return;
@@ -145,6 +161,12 @@ const TradeHistory: React.FC = () => {
     }
   };
 
+  // Function to open trade metrics modal
+  const showTradeMetrics = (trade: Trade) => {
+    setSelectedTrade(trade);
+    setShowMetricsModal(true);
+  };
+
   // Sort trades
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -209,6 +231,24 @@ const TradeHistory: React.FC = () => {
       const bFees = b.fees || 0;
       return sortDirection === 'asc' ? aFees - bFees : bFees - aFees;
     }
+
+    if (sortField === 'trade_metrics.targetRR') {
+      const aRR = a.trade_metrics?.targetRR || 0;
+      const bRR = b.trade_metrics?.targetRR || 0;
+      return sortDirection === 'asc' ? aRR - bRR : bRR - aRR;
+    }
+
+    if (sortField === 'trade_metrics.finishedRR') {
+      const aRR = a.trade_metrics?.finishedRR || 0;
+      const bRR = b.trade_metrics?.finishedRR || 0;
+      return sortDirection === 'asc' ? aRR - bRR : bRR - aRR;
+    }
+
+    if (sortField === 'trade_metrics.totalTradeTimeSeconds') {
+      const aTime = a.trade_metrics?.totalTradeTimeSeconds || 0;
+      const bTime = b.trade_metrics?.totalTradeTimeSeconds || 0;
+      return sortDirection === 'asc' ? aTime - bTime : bTime - aTime;
+    }
     
     // Default case, sort by string fields
     const aValue = (a as any)[sortField]?.toString() || '';
@@ -225,7 +265,8 @@ const TradeHistory: React.FC = () => {
     const headers = [
       'Date', 'Bot', 'Symbol', 'Side', 'Type', 'Price', 'Quantity', 
       'Entry Price', 'Exit Price', 'P/L', 'Fees', 
-      'Stop Loss', 'Take Profit', 'Status', 'State', 'Close Reason', 'Order ID'
+      'Stop Loss', 'Take Profit', 'Status', 'State', 'Close Reason', 'Order ID',
+      'Target R:R', 'Actual R:R', 'Trade Duration', 'Slippage', 'Max Risk'
     ];
     const csvRows = [
       headers.join(','),
@@ -246,7 +287,12 @@ const TradeHistory: React.FC = () => {
         trade.status,
         trade.state || 'open',
         trade.close_reason || '',
-        trade.order_id
+        trade.order_id,
+        trade.trade_metrics?.targetRR?.toFixed(2) || '',
+        trade.trade_metrics?.finishedRR?.toFixed(2) || '',
+        trade.trade_metrics?.formattedTradeTime || '',
+        trade.trade_metrics?.slippage?.toFixed(6) || '',
+        trade.trade_metrics?.maxRisk || ''
       ].join(','))
     ];
     
@@ -343,7 +389,7 @@ const TradeHistory: React.FC = () => {
 
       {/* Summary stats */}
       <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="p-3">
             <div className="text-sm text-gray-500">Total Trades</div>
             <div className="text-xl font-semibold">{filteredTrades.length}</div>
@@ -360,6 +406,18 @@ const TradeHistory: React.FC = () => {
             <div className="text-sm text-gray-500">Average P/L per Trade</div>
             <div className={`text-xl font-semibold ${totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {filteredTrades.length > 0 ? (totalPnl / filteredTrades.length).toFixed(2) : '0.00'} USDT
+            </div>
+          </div>
+
+          <div className="p-3">
+            <div className="text-sm text-gray-500">Win Rate</div>
+            <div className="text-xl font-semibold text-blue-600">
+              {(() => {
+                const closedTrades = filteredTrades.filter(t => t.state === 'closed');
+                if (closedTrades.length === 0) return '0.00%';
+                const winningTrades = closedTrades.filter(t => (t.realized_pnl || 0) > 0);
+                return ((winningTrades.length / closedTrades.length) * 100).toFixed(1) + '%';
+              })()}
             </div>
           </div>
         </div>
@@ -460,6 +518,12 @@ const TradeHistory: React.FC = () => {
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('trade_metrics.targetRR')}
+                    >
+                      R:R {renderSortIndicator('trade_metrics.targetRR')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                       onClick={() => handleSort('state')}
                     >
                       State {renderSortIndicator('state')}
@@ -537,6 +601,16 @@ const TradeHistory: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {trade.take_profit ? trade.take_profit.toFixed(2) : '-'}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.trade_metrics ? (
+                          <button
+                            onClick={() => showTradeMetrics(trade)}
+                            className="text-blue-600 hover:text-blue-800 underline"
+                          >
+                            {trade.trade_metrics.targetRR ? trade.trade_metrics.targetRR.toFixed(2) : '-'}
+                          </button>
+                        ) : '-'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
                           trade.state === 'open' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'
@@ -583,6 +657,140 @@ const TradeHistory: React.FC = () => {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Trade Metrics Modal */}
+      {showMetricsModal && selectedTrade && selectedTrade.trade_metrics && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="text-xl font-bold">Trade Metrics: {selectedTrade.symbol}</h3>
+              <button 
+                onClick={() => setShowMetricsModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-2 gap-4">
+                {/* Basic Trade Info */}
+                <div className="col-span-2 mb-2 pb-2 border-b">
+                  <h4 className="text-lg font-semibold mb-2">Trade Summary</h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-sm text-gray-500">Symbol</p>
+                      <p className="text-md font-medium">{selectedTrade.symbol}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Side</p>
+                      <p className={`text-md font-medium ${selectedTrade.side === 'Buy' ? 'text-green-600' : 'text-red-600'}`}>
+                        {selectedTrade.side}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Quantity</p>
+                      <p className="text-md font-medium">{selectedTrade.quantity}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Price Data */}
+                <div className="col-span-2 mb-2 pb-2 border-b">
+                  <h4 className="text-lg font-semibold mb-2">Price Data</h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-sm text-gray-500">Planned Entry</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.wantedEntry?.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Actual Entry</p>
+                      <p className="text-md font-medium">{selectedTrade.avg_entry_price?.toFixed(2) || selectedTrade.price?.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Exit Price</p>
+                      <p className="text-md font-medium">{selectedTrade.avg_exit_price?.toFixed(2) || selectedTrade.exit_price?.toFixed(2) || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Stop Loss</p>
+                      <p className="text-md font-medium">{selectedTrade.stop_loss?.toFixed(2) || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Take Profit</p>
+                      <p className="text-md font-medium">{selectedTrade.take_profit?.toFixed(2) || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Slippage</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.slippage?.toFixed(6) || '0'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Risk & Reward Metrics */}
+                <div className="col-span-2 mb-2 pb-2 border-b">
+                  <h4 className="text-lg font-semibold mb-2">Risk & Reward</h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-sm text-gray-500">Max Risk</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.maxRisk?.toFixed(2)} USDT</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Risk per Unit</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.riskPerUnit?.toFixed(6)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Position Value</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.positionNotional?.toFixed(2)} USDT</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Target R:R</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.targetRR?.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Actual R:R</p>
+                      <p className={`text-md font-medium ${selectedTrade.trade_metrics.finishedRR >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {selectedTrade.trade_metrics.finishedRR?.toFixed(2)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Risk Deviation %</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.deviationPercentFromMaxRisk?.toFixed(2)}%</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Time & Cost Metrics */}
+                <div className="col-span-2 mb-2">
+                  <h4 className="text-lg font-semibold mb-2">Time & Cost</h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-sm text-gray-500">Trade Duration</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.formattedTradeTime}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Total Fees</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics.totalFees?.toFixed(4) || selectedTrade.fees?.toFixed(4) || '0'} USDT</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Final P/L</p>
+                      <p className={`text-md font-medium ${selectedTrade.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {selectedTrade.realized_pnl?.toFixed(2) || '0'} USDT
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="p-4 border-t bg-gray-50">
+              <button
+                onClick={() => setShowMetricsModal(false)}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
