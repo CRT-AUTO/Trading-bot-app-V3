@@ -59,60 +59,73 @@ export function calculatePositionSize({
     riskPerUnit = stopLoss - entryPrice;
   }
 
-  // Calculate entry and exit fees
-  const entryFee = feePercentage / 100; // Convert to decimal (e.g., 0.075% -> 0.00075)
-  const exitFee = feePercentage / 100;
+  // Calculate fee percentages (convert from percentage to decimal)
+  const entryFeeRate = feePercentage / 100; // Convert to decimal (e.g., 0.075% -> 0.00075)
+  const exitFeeRate = feePercentage / 100;
   
-  // Add fee cost to risk calculation
-  // For a position size of X, we pay:
-  // - Entry fee: X * entryPrice * entryFee
-  // - Exit fee: X * exitPrice * exitFee (where exitPrice is approximately stopLoss)
+  // Calculate position size directly based on risk formula
+  // For a position size of X coins at price P:
+  // X * abs(entry - stop) + X * P * entryFee + X * stopLoss * exitFee = riskAmount
+  // Solve for X:
   
-  // The total additional cost due to fees is approximately:
-  // X * entryPrice * entryFee + X * stopLoss * exitFee
+  // Calculate the effective risk per unit including fees
+  const feeCostFactor = (entryPrice * entryFeeRate) + (stopLoss * exitFeeRate);
+  const effectiveRiskPerUnit = riskPerUnit + feeCostFactor;
   
-  // Factor this into our risk calculation
-  const totalFeeRateFactor = (entryPrice * entryFee + stopLoss * exitFee) / entryPrice;
+  // Calculate position size in coins
+  const positionSizeCoins = riskAmount / effectiveRiskPerUnit;
   
-  // Calculate raw position size: risk amount / (risk per unit + fees)
-  let positionSize = riskAmount / (riskPerUnit + (entryPrice * totalFeeRateFactor));
+  console.log(`Calculation details: 
+    Risk per unit: ${riskPerUnit}
+    Fee cost factor: ${feeCostFactor}
+    Effective risk per unit: ${effectiveRiskPerUnit}
+    Raw position size (coins): ${positionSizeCoins}`);
   
-  console.log(`Raw calculated position: riskPerUnit=${riskPerUnit}, totalFeeRateFactor=${totalFeeRateFactor}, position=${positionSize}`);
+  // Apply any constraints (min quantity, step size, max position size)
+  let finalQuantity = positionSizeCoins;
   
-  // Convert to quantity
-  let quantity = positionSize / entryPrice;
-  
-  // Check minimum quantity
-  if (quantity < minQty) {
-    console.log(`Calculated quantity ${quantity} is below minimum ${minQty}, using minimum`);
-    quantity = minQty;
+  // Ensure the quantity meets minimum requirements
+  if (finalQuantity < minQty) {
+    console.log(`Calculated quantity ${finalQuantity} is below minimum ${minQty}, using minimum`);
+    finalQuantity = minQty;
   }
   
   // Round down to the nearest step size
   if (qtyStep > 0) {
-    quantity = Math.floor(quantity / qtyStep) * qtyStep;
-    console.log(`Rounded quantity to step size (${qtyStep}): ${quantity}`);
+    // Use Math.floor to ensure we always round down to stay within risk parameters
+    finalQuantity = Math.floor(finalQuantity / qtyStep) * qtyStep;
+    console.log(`Rounded quantity to step size (${qtyStep}): ${finalQuantity}`);
   }
   
   // Ensure we don't exceed max position size if specified
   if (maxPositionSize > 0) {
-    const positionValueUSDT = quantity * entryPrice;
+    const positionValueUSDT = finalQuantity * entryPrice;
     if (positionValueUSDT > maxPositionSize) {
-      quantity = (maxPositionSize / entryPrice);
-      // Round down to the nearest step size again
-      if (qtyStep > 0) {
-        quantity = Math.floor(quantity / qtyStep) * qtyStep;
-      }
-      console.log(`Reduced quantity to respect max position size (${maxPositionSize}): ${quantity}`);
+      // Calculate maximum allowed quantity based on max position size
+      const maxAllowedQty = maxPositionSize / entryPrice;
+      // Round down to the nearest step size
+      finalQuantity = Math.floor(maxAllowedQty / qtyStep) * qtyStep;
+      console.log(`Reduced quantity to respect max position size (${maxPositionSize}): ${finalQuantity}`);
     }
   }
   
-  // Final rounding to the correct number of decimal places
-  quantity = parseFloat(quantity.toFixed(decimals));
+  // Apply precision (number of decimal places)
+  finalQuantity = parseFloat(finalQuantity.toFixed(decimals));
   
-  // Calculate actual risk with the adjusted quantity
-  const actualRisk = (quantity * riskPerUnit) + (quantity * entryPrice * entryFee) + (quantity * stopLoss * exitFee);
-  console.log(`Final quantity: ${quantity}, Actual risk: ${actualRisk.toFixed(2)} USDT (target: ${riskAmount} USDT)`);
+  // Calculate actual risk with the adjusted quantity for logging purposes
+  const actualRisk = (finalQuantity * riskPerUnit) + 
+                    (finalQuantity * entryPrice * entryFeeRate) + 
+                    (finalQuantity * stopLoss * exitFeeRate);
   
-  return quantity;
+  console.log(`Final position size calculation:
+    Final quantity: ${finalQuantity}
+    Min quantity: ${minQty}
+    Step size: ${qtyStep}
+    Actual risk: ${actualRisk.toFixed(2)} USDT (target: ${riskAmount} USDT)
+    Entry price: ${entryPrice}
+    Stop loss: ${stopLoss}
+    Risk per unit: ${riskPerUnit}
+    Position value: ${(finalQuantity * entryPrice).toFixed(2)} USDT`);
+  
+  return finalQuantity;
 }
