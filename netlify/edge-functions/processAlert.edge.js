@@ -2,6 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { executeBybitOrder, MAINNET_URL, TESTNET_URL } from './utils/bybit.edge.mjs';
 import { calculatePositionSize } from './utils/positionSizing.edge.mjs';
+import { calculateTradeMetrics } from './utils/tradeMetrics.edge.mjs';
 
 // CORS headers to include in all responses
 const corsHeaders = {
@@ -470,6 +471,68 @@ export default async function handler(request, context) {
         );
       }
       
+      // Calculate trade metrics
+      let tradeMetrics = null;
+      try {
+        // Get necessary data for trade metrics calculation
+        const plannedEntry = openTrade.price || 0;
+        const actualEntry = openTrade.avg_entry_price || openTrade.price || 0;
+        const exitPrice = closeResult ? closeResult.price : (alertData.price || 0);
+        const takeProfit = openTrade.take_profit || 0;
+        const stopLoss = openTrade.stop_loss || 0;
+        const maxRisk = bot.risk_per_trade || 10; // Default to 10 if not set
+        const openFee = (openTrade.fees || 0) / 2; // Estimate if not available
+        const closeFee = (openTrade.fees || 0) / 2; // Estimate if not available
+        const openTime = new Date(openTrade.created_at).getTime();
+        const closeTime = Date.now();
+        
+        // Calculate trade metrics
+        tradeMetrics = calculateTradeMetrics({
+          symbol: openTrade.symbol,
+          side: openTrade.side,
+          plannedEntry,
+          actualEntry,
+          takeProfit,
+          stopLoss,
+          maxRisk,
+          finishedDollar: realizedPnl,
+          openFee,
+          closeFee,
+          openTime,
+          closeTime,
+        });
+        
+        console.log('Trade metrics calculated:', tradeMetrics);
+        
+        await logEvent(
+          supabase,
+          'info',
+          'Trade metrics calculated',
+          { 
+            trade_id: openTrade.id,
+            metrics: tradeMetrics
+          },
+          webhook.id,
+          webhook.bot_id,
+          webhook.user_id
+        );
+      } catch (error) {
+        console.error('Error calculating trade metrics:', error);
+        
+        await logEvent(
+          supabase,
+          'error',
+          'Failed to calculate trade metrics',
+          { 
+            error: error.message,
+            trade_id: openTrade.id
+          },
+          webhook.id,
+          webhook.bot_id,
+          webhook.user_id
+        );
+      }
+      
       // Update the trade record
       console.log(`Updating trade ${openTrade.id} with realized PnL: ${realizedPnl}`);
       const { error: updateError } = await supabase
@@ -478,6 +541,8 @@ export default async function handler(request, context) {
           state: 'closed',
           close_reason: closeReason,
           realized_pnl: realizedPnl,
+          exit_price: closeResult ? closeResult.price : null,
+          trade_metrics: tradeMetrics,
           updated_at: new Date().toISOString()
         })
         .eq('id', openTrade.id);
