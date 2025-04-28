@@ -60,6 +60,11 @@ type Trade = {
   price: number;
   realized_pnl: number | null;
   created_at: string;
+  trade_metrics?: {
+    targetRR: number;
+    finishedRR: number;
+    totalTradeTimeSeconds: number;
+  };
 };
 
 type TimeRange = '1w' | '1m' | '3m' | 'all';
@@ -91,6 +96,9 @@ const Analytics: React.FC = () => {
     netProfit: 0,
     sharpeRatio: 0,
     maxDrawdown: 0,
+    avgTradeTimeMinutes: 0,
+    avgRiskRewardRatio: 0,
+    avgRealizedRiskRewardRatio: 0,
   });
 
   // Fetch data on component mount
@@ -204,6 +212,9 @@ const Analytics: React.FC = () => {
         netProfit: 0,
         sharpeRatio: 0,
         maxDrawdown: 0,
+        avgTradeTimeMinutes: 0,
+        avgRiskRewardRatio: 0,
+        avgRealizedRiskRewardRatio: 0,
       });
       return;
     }
@@ -217,6 +228,12 @@ const Analytics: React.FC = () => {
     let largestWin = 0;
     let largestLoss = 0;
     let netProfit = 0;
+    let totalTradeTime = 0;
+    let tradesWithTime = 0;
+    let totalTargetRR = 0;
+    let tradesWithTargetRR = 0;
+    let totalRealizedRR = 0;
+    let tradesWithRealizedRR = 0;
     
     // Helper for drawdown calculation
     let peak = 0;
@@ -275,6 +292,26 @@ const Analytics: React.FC = () => {
       } else {
         dailyReturn += pnl;
       }
+      
+      // Process trade metrics if available
+      if (trade.trade_metrics) {
+        // Trade time stats
+        if (trade.trade_metrics.totalTradeTimeSeconds) {
+          totalTradeTime += trade.trade_metrics.totalTradeTimeSeconds;
+          tradesWithTime++;
+        }
+        
+        // Risk-reward ratio stats
+        if (trade.trade_metrics.targetRR) {
+          totalTargetRR += trade.trade_metrics.targetRR;
+          tradesWithTargetRR++;
+        }
+        
+        if (trade.trade_metrics.finishedRR) {
+          totalRealizedRR += trade.trade_metrics.finishedRR;
+          tradesWithRealizedRR++;
+        }
+      }
     });
     
     // Add the last day's return
@@ -290,6 +327,13 @@ const Analytics: React.FC = () => {
     
     // Calculate Sharpe ratio (assuming risk-free rate = 0)
     const sharpeRatio = stdDevDailyReturn ? (avgDailyReturn / stdDevDailyReturn) * Math.sqrt(252) : 0; // Annualized
+    
+    // Calculate average trade time in minutes
+    const avgTradeTimeMinutes = tradesWithTime ? (totalTradeTime / tradesWithTime) / 60 : 0;
+    
+    // Calculate average risk-reward ratios
+    const avgRiskRewardRatio = tradesWithTargetRR ? totalTargetRR / tradesWithTargetRR : 0;
+    const avgRealizedRiskRewardRatio = tradesWithRealizedRR ? totalRealizedRR / tradesWithRealizedRR : 0;
     
     // Calculate derived metrics
     const winRate = trades.length ? (winningTrades / trades.length) * 100 : 0;
@@ -312,6 +356,9 @@ const Analytics: React.FC = () => {
       netProfit,
       sharpeRatio,
       maxDrawdown,
+      avgTradeTimeMinutes,
+      avgRiskRewardRatio,
+      avgRealizedRiskRewardRatio
     });
   };
   
@@ -416,9 +463,58 @@ const Analytics: React.FC = () => {
     };
   };
   
+  // Prepare chart data for risk/reward ratio distribution
+  const prepareRiskRewardData = () => {
+    if (!trades.length) return null;
+    
+    const tradesWithMetrics = trades.filter(trade => 
+      trade.trade_metrics?.finishedRR !== undefined && 
+      trade.state === 'closed'
+    );
+    
+    if (tradesWithMetrics.length === 0) return null;
+    
+    // Group by RR ranges
+    const rrRanges = [
+      { label: '<-2', count: 0 },
+      { label: '-2 to -1', count: 0 },
+      { label: '-1 to 0', count: 0 },
+      { label: '0 to 1', count: 0 },
+      { label: '1 to 2', count: 0 },
+      { label: '2 to 3', count: 0 },
+      { label: '>3', count: 0 }
+    ];
+    
+    tradesWithMetrics.forEach(trade => {
+      const rr = trade.trade_metrics?.finishedRR || 0;
+      
+      if (rr < -2) rrRanges[0].count++;
+      else if (rr < -1) rrRanges[1].count++;
+      else if (rr < 0) rrRanges[2].count++;
+      else if (rr < 1) rrRanges[3].count++;
+      else if (rr < 2) rrRanges[4].count++;
+      else if (rr < 3) rrRanges[5].count++;
+      else rrRanges[6].count++;
+    });
+    
+    return {
+      labels: rrRanges.map(r => r.label),
+      datasets: [
+        {
+          label: 'R:R Distribution',
+          data: rrRanges.map(r => r.count),
+          backgroundColor: rrRanges.map((_, i) => 
+            i < 3 ? 'rgba(239, 68, 68, 0.7)' : 'rgba(34, 197, 94, 0.7)'
+          ),
+        }
+      ]
+    };
+  };
+  
   const equityCurveData = prepareEquityCurveData();
   const winLossDistributionData = prepareWinLossDistributionData();
   const pnlByTradeData = preparePnlByTradeData();
+  const riskRewardData = prepareRiskRewardData();
 
   return (
     <div>
@@ -584,15 +680,20 @@ const Analytics: React.FC = () => {
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">Max Drawdown</p>
-                  <p className="text-lg font-medium text-red-600">{metrics.maxDrawdown.toFixed(2)} USDT</p>
+                  <p className="text-sm text-gray-500">Avg Target R:R</p>
+                  <p className="text-lg font-medium">{metrics.avgRiskRewardRatio.toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">Max Drawdown %</p>
-                  <p className="text-lg font-medium text-red-600">
-                    {metrics.netProfit + metrics.maxDrawdown > 0 
-                      ? ((metrics.maxDrawdown / (metrics.netProfit + metrics.maxDrawdown)) * 100).toFixed(2) 
-                      : '0.00'}%
+                  <p className="text-sm text-gray-500">Avg Realized R:R</p>
+                  <p className="text-lg font-medium">{metrics.avgRealizedRiskRewardRatio.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Avg Trade Duration</p>
+                  <p className="text-lg font-medium">
+                    {metrics.avgTradeTimeMinutes > 60 
+                      ? (metrics.avgTradeTimeMinutes / 60).toFixed(1) + ' hours' 
+                      : metrics.avgTradeTimeMinutes.toFixed(0) + ' mins'
+                    }
                   </p>
                 </div>
                 <div>
@@ -600,6 +701,10 @@ const Analytics: React.FC = () => {
                   <p className="text-lg font-medium">
                     {((metrics.winRate / 100) * metrics.avgWin - ((100 - metrics.winRate) / 100) * metrics.avgLoss).toFixed(2)}
                   </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Max Drawdown</p>
+                  <p className="text-lg font-medium text-red-600">{metrics.maxDrawdown.toFixed(2)} USDT</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">First Trade</p>
@@ -650,6 +755,46 @@ const Analytics: React.FC = () => {
                 ) : (
                   <div className="flex items-center justify-center h-full">
                     <p className="text-gray-500">No trade data available</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* Risk-Reward Distribution */}
+            <div className="bg-white p-6 rounded-lg shadow-sm">
+              <h3 className="text-lg font-semibold mb-4">Risk-Reward Ratio Distribution</h3>
+              <div className="h-64">
+                {riskRewardData ? (
+                  <Bar 
+                    data={riskRewardData}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: {
+                          position: 'top',
+                        },
+                        tooltip: {
+                          callbacks: {
+                            label: function(context) {
+                              return `Trades: ${context.parsed.y}`;
+                            }
+                          }
+                        }
+                      },
+                      scales: {
+                        y: {
+                          beginAtZero: true,
+                          ticks: {
+                            precision: 0
+                          }
+                        }
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-gray-500">No risk-reward data available</p>
                   </div>
                 )}
               </div>
