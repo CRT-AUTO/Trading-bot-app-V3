@@ -45,7 +45,7 @@ function App() {
             >
               <Route index element={<Dashboard />} />
               <Route path="bots" element={<Bots />} />
-              <Route path="bots/new" element={<BotConfiguration />} />
+              <Route path="bots/new" element={<BotConfiguration isNew={true} />} />
               <Route path="bots/:id" element={<BotConfiguration />} />
               <Route path="trades" element={<TradeHistory />} />
               <Route path="analytics" element={<Analytics />} />
