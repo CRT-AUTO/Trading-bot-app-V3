@@ -23,19 +23,24 @@ type BotFormData = {
   limit_fee_percentage: number;
 };
 
-const BotConfiguration: React.FC = () => {
+interface BotConfigurationProps {
+  isNew?: boolean;
+}
+
+const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { supabase } = useSupabase();
   const { user } = useAuth();
   
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
   const [botStatus, setBotStatus] = useState<'active' | 'paused' | 'error'>('paused');
   const [generateLoading, setGenerateLoading] = useState(false);
-  const [isNew, setIsNew] = useState(id === 'new');
+  
+  console.log(`BotConfiguration component mounted. isNew prop: ${isNew}, id param: ${id}`);
   
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<BotFormData>({
     defaultValues: {
@@ -63,10 +68,15 @@ const BotConfiguration: React.FC = () => {
   // Fetch bot data if editing
   useEffect(() => {
     const fetchBotData = async () => {
-      if (isNew || !id || !user) return;
+      if (isNew || !id || !user) {
+        console.log('Creating new bot or missing id/user, skipping data fetch');
+        setLoading(false);
+        return;
+      }
       
       setLoading(true);
       try {
+        console.log(`Fetching bot data for id: ${id}`);
         // Fetch bot data
         const { data: botData, error: botError } = await supabase
           .from('bots')
@@ -75,9 +85,13 @@ const BotConfiguration: React.FC = () => {
           .eq('user_id', user.id)
           .single();
           
-        if (botError) throw botError;
+        if (botError) {
+          console.error('Error fetching bot data:', botError);
+          throw botError;
+        }
         
         if (botData) {
+          console.log('Bot data fetched successfully:', botData);
           // Set form values
           setValue('name', botData.name);
           setValue('symbol', botData.symbol);
@@ -127,9 +141,12 @@ const BotConfiguration: React.FC = () => {
   const onSubmit = async (data: BotFormData) => {
     if (!user) return;
     
+    console.log('Form submitted with data:', data);
     setSaving(true);
+    
     try {
       if (isNew) {
+        console.log('Creating new bot with data:', data);
         // Create new bot
         const { data: newBot, error } = await supabase
           .from('bots')
@@ -156,11 +173,17 @@ const BotConfiguration: React.FC = () => {
           .select()
           .single();
           
-        if (error) throw error;
+        if (error) {
+          console.error('Error creating bot:', error);
+          throw error;
+        }
+        
+        console.log('New bot created successfully:', newBot);
         
         // Navigate to the edit page
         navigate(`/bots/${newBot.id}`);
-      } else if (id && id !== 'new') {
+      } else if (id) {
+        console.log('Updating existing bot with data:', data);
         // Update existing bot
         const { error } = await supabase
           .from('bots')
@@ -185,7 +208,12 @@ const BotConfiguration: React.FC = () => {
           .eq('id', id)
           .eq('user_id', user.id);
           
-        if (error) throw error;
+        if (error) {
+          console.error('Error updating bot:', error);
+          throw error;
+        }
+        
+        console.log('Bot updated successfully');
       }
     } catch (error) {
       console.error('Error saving bot:', error);
@@ -196,7 +224,7 @@ const BotConfiguration: React.FC = () => {
   };
 
   const generateWebhook = async () => {
-    if (!id || id === 'new' || !user) return;
+    if (!id || !user) return;
     
     setGenerateLoading(true);
     try {
@@ -253,7 +281,7 @@ const BotConfiguration: React.FC = () => {
   };
 
   const toggleBotStatus = async () => {
-    if (!id || id === 'new' || !user) return;
+    if (!id || !user) return;
     
     const newStatus = botStatus === 'active' ? 'paused' : 'active';
     
@@ -274,7 +302,7 @@ const BotConfiguration: React.FC = () => {
   };
 
   const deleteBot = async () => {
-    if (!id || id === 'new' || !user || !confirm('Are you sure you want to delete this bot?')) return;
+    if (!id || !user || !confirm('Are you sure you want to delete this bot?')) return;
     
     try {
       // Delete webhooks first
