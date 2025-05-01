@@ -419,7 +419,7 @@ export default async function handler(request, context) {
         // Use a much wider time window of 24 hours to increase chances of finding the trade
         const tradeTime = new Date(trade.created_at).getTime();
         const startTime = tradeTime - (24 * 3600 * 1000); // 24 hours before
-        //const endTime = tradeTime + (24 * 3600 * 1000); // 24 hours after
+        const endTime = tradeTime + (144 * 3600 * 1000); // 24 hours after
         
         console.log(`Time range for PnL search: 
           Trade time: ${new Date(tradeTime).toISOString()}
@@ -433,7 +433,7 @@ export default async function handler(request, context) {
           symbol: trade.symbol,
           limit: '100',  // Increased limit to find more potential matches
           startTime: startTime.toString(),
-          //endTime: endTime.toString(),
+          endTime: endTime.toString(),
           timestamp,
           recv_window: recvWindow
         });
