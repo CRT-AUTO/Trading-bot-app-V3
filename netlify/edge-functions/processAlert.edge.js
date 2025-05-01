@@ -237,36 +237,65 @@ export default async function handler(request, context) {
 
     // Load bot config + API key
     const bot = webhook.bots;
-    const { data: apiKey, error: apiKeyError } = await supabase
+    
+    // Check if this bot has a specific API key assigned
+    let apiKeyQuery = supabase
       .from('api_keys')
       .select('*')
       .eq('user_id', webhook.user_id)
-      .eq('exchange', 'bybit')
-      .single();
+      .eq('exchange', 'bybit');
+    
+    if (bot.api_key_id) {
+      // If bot has specific API key, use that one
+      apiKeyQuery = apiKeyQuery.eq('id', bot.api_key_id);
+    } else {
+      // Otherwise, use the default API key
+      apiKeyQuery = apiKeyQuery.eq('is_default', true);
+    }
+    
+    const { data: apiKey, error: apiKeyError } = await apiKeyQuery.single();
     
     if (apiKeyError || !apiKey) {
-      console.error("API key not found:", apiKeyError);
+      // If no specific key or default key found, try fetching any key
+      const { data: fallbackKey, error: fallbackError } = await supabase
+        .from('api_keys')
+        .select('*')
+        .eq('user_id', webhook.user_id)
+        .eq('exchange', 'bybit')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single();
       
-      await logEvent(
-        supabase,
-        'error',
-        'API credentials not found',
-        { error: apiKeyError },
-        webhook.id,
-        webhook.bot_id,
-        webhook.user_id
-      );
-      
-      return new Response(
-        JSON.stringify({ error: 'API credentials not found' }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json"
+      if (fallbackError || !fallbackKey) {
+        console.error("API key not found:", apiKeyError);
+        
+        await logEvent(
+          supabase,
+          'error',
+          'API credentials not found',
+          { error: apiKeyError },
+          webhook.id,
+          webhook.bot_id,
+          webhook.user_id
+        );
+        
+        return new Response(
+          JSON.stringify({ error: 'API credentials not found' }),
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json"
+            }
           }
-        }
-      );
+        );
+      }
+      
+      // Use fallback key
+      console.log(`Using fallback API key: ${fallbackKey.name}`);
+      apiKey = fallbackKey;
+    } else {
+      console.log(`Using API key: ${apiKey.name}`);
     }
 
     // Check if this is a closing signal
