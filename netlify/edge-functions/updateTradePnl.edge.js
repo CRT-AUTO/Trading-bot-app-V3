@@ -159,7 +159,7 @@ export default async function handler(request, context) {
       );
     }
     
-    // Get trade details
+    // Get trade details with bot info
     const { data: trade, error: tradeError } = await supabase
       .from('trades')
       .select('*, bots:bot_id(*)')
@@ -221,37 +221,64 @@ export default async function handler(request, context) {
       );
     }
     
-    // Get API credentials
-    const { data: apiKey, error: apiKeyError } = await supabase
+    // Get the appropriate API key for this bot
+    let apiKeyQuery = supabase
       .from('api_keys')
       .select('*')
       .eq('user_id', trade.user_id)
-      .eq('exchange', 'bybit')
-      .single();
-      
+      .eq('exchange', 'bybit');
+    
+    if (trade.bots.api_key_id) {
+      // If bot has specific API key, use that one
+      apiKeyQuery = apiKeyQuery.eq('id', trade.bots.api_key_id);
+    } else {
+      // Otherwise, use the default API key
+      apiKeyQuery = apiKeyQuery.eq('is_default', true);
+    }
+    
+    const { data: apiKey, error: apiKeyError } = await apiKeyQuery.single();
+    
     if (apiKeyError || !apiKey) {
-      console.error("API credentials not found:", apiKeyError);
+      // If no specific key or default key found, try fetching any key
+      const { data: fallbackKey, error: fallbackError } = await supabase
+        .from('api_keys')
+        .select('*')
+        .eq('user_id', trade.user_id)
+        .eq('exchange', 'bybit')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single();
       
-      await logEvent(
-        supabase,
-        'error',
-        'API credentials not found for PnL update',
-        { error: apiKeyError },
-        tradeId,
-        trade.bot_id,
-        trade.user_id
-      );
-      
-      return new Response(
-        JSON.stringify({ error: "API credentials not found" }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json"
+      if (fallbackError || !fallbackKey) {
+        console.error("API credentials not found:", apiKeyError);
+        
+        await logEvent(
+          supabase,
+          'error',
+          'API credentials not found for PnL update',
+          { error: apiKeyError },
+          tradeId,
+          trade.bot_id,
+          trade.user_id
+        );
+        
+        return new Response(
+          JSON.stringify({ error: "API credentials not found" }),
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json"
+            }
           }
-        }
-      );
+        );
+      }
+      
+      // Use fallback key
+      console.log(`Using fallback API key: ${fallbackKey.name}`);
+      apiKey = fallbackKey;
+    } else {
+      console.log(`Using API key: ${apiKey.name}`);
     }
     
     // If it's a test trade, we don't call the Bybit API
