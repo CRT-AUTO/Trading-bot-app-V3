@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, ArrowRight, Bot, RefreshCw, CheckCircle, XCircle, Play, Pause } from 'lucide-react';
+import { Plus, ArrowRight, Bot, RefreshCw, CheckCircle, XCircle, Play, Pause, Key } from 'lucide-react';
 import { useSupabase } from '../contexts/SupabaseContext';
 import { useAuth } from '../contexts/AuthContext';
 import { format } from 'date-fns';
+
+type ApiKey = {
+  id: string;
+  name: string;
+};
 
 type Bot = {
   id: string;
@@ -16,6 +21,8 @@ type Bot = {
   profit_loss: number;
   test_mode: boolean;
   description?: string;
+  api_key_id?: string | null;
+  api_key_name?: string | null;
 };
 
 const Bots: React.FC = () => {
@@ -25,6 +32,7 @@ const Bots: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeBots, setActiveBots] = useState<Bot[]>([]);
   const [pausedBots, setPausedBots] = useState<Bot[]>([]);
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const fetchBots = async () => {
@@ -33,6 +41,22 @@ const Bots: React.FC = () => {
       setLoading(true);
       
       try {
+        // Fetch API keys first
+        const { data: keys, error: keysError } = await supabase
+          .from('api_keys')
+          .select('id, name')
+          .eq('user_id', user.id);
+          
+        if (keysError) throw keysError;
+        
+        // Convert to lookup object
+        const keyLookup = (keys || []).reduce((acc: Record<string, string>, key) => {
+          acc[key.id] = key.name;
+          return acc;
+        }, {});
+        
+        setApiKeys(keyLookup);
+        
         // Fetch bots
         const { data, error } = await supabase
           .from('bots')
@@ -42,11 +66,17 @@ const Bots: React.FC = () => {
 
         if (error) throw error;
         
-        setBots(data || []);
+        // Add API key name to each bot
+        const botsWithKeyNames = (data || []).map(bot => ({
+          ...bot,
+          api_key_name: bot.api_key_id ? keyLookup[bot.api_key_id] : 'Default'
+        }));
+        
+        setBots(botsWithKeyNames);
         
         // Separate active and paused bots
-        const active = data?.filter(bot => bot.status === 'active') || [];
-        const paused = data?.filter(bot => bot.status !== 'active') || [];
+        const active = botsWithKeyNames.filter(bot => bot.status === 'active') || [];
+        const paused = botsWithKeyNames.filter(bot => bot.status !== 'active') || [];
         
         setActiveBots(active);
         setPausedBots(paused);
@@ -121,6 +151,12 @@ const Bots: React.FC = () => {
           Test Mode: {bot.test_mode ? 
             <span className="text-yellow-600">Enabled</span> : 
             <span className="text-green-600">Disabled</span>}
+        </div>
+        <div className="text-gray-600 mb-1">
+          API Key: <span className="inline-flex items-center">
+            <Key size={14} className="text-blue-500 mr-1" />
+            {bot.api_key_name || 'Default'}
+          </span>
         </div>
         <div className="text-gray-600 mb-4">
           Trades: {bot.trade_count || 0} | P/L: {(bot.profit_loss || 0).toFixed(2)} USDT
