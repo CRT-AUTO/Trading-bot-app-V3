@@ -43,25 +43,64 @@ function sleep(ms) {
 
 // Helper function to find the best matching PnL record
 function findBestMatchingPnl(trade, closedPnlList) {
+  console.log(`Finding best PnL match for trade: Symbol=${trade.symbol}, Side=${trade.side}, Qty=${trade.quantity}, OrderID=${trade.order_id}`);
+  
   // First try exact orderId match
   const exactMatch = closedPnlList.find(pnl => pnl.orderId === trade.order_id);
-  if (exactMatch) return { match: exactMatch, matchType: 'exact_order_id' };
+  if (exactMatch) {
+    console.log(`Found exact order ID match: ${exactMatch.orderId}`);
+    return { match: exactMatch, matchType: 'exact_order_id' };
+  }
+  
+  console.log(`No exact order ID match found, trying alternative matching methods...`);
   
   // Filter by symbol
   const symbolMatches = closedPnlList.filter(pnl => pnl.symbol === trade.symbol);
+  console.log(`Found ${symbolMatches.length} trades with matching symbol: ${trade.symbol}`);
+  
   if (symbolMatches.length === 0) return { match: null, matchType: 'no_symbol_match' };
   
   // Filter by matching side 
   // Note: If trade.side = 'Buy', the closing side in Bybit would be 'Sell' and vice versa
   const oppositeSide = trade.side === 'Buy' ? 'Sell' : 'Buy';
   const sideMatches = symbolMatches.filter(pnl => pnl.side === oppositeSide);
-  if (sideMatches.length === 0) return { match: null, matchType: 'no_side_match' };
+  console.log(`Found ${sideMatches.length} trades with opposite side: ${oppositeSide}`);
+  
+  if (sideMatches.length === 0) {
+    // If no opposite side matches, try with the same side as a fallback
+    // This is because some API responses might report the original side, not the closing side
+    console.log(`No opposite side matches, trying with same side: ${trade.side}`);
+    const sameSideMatches = symbolMatches.filter(pnl => pnl.side === trade.side);
+    if (sameSideMatches.length > 0) {
+      console.log(`Found ${sameSideMatches.length} trades with same side: ${trade.side}`);
+      
+      // Sort by time closest to trade.created_at
+      const tradeTime = new Date(trade.created_at).getTime();
+      sameSideMatches.sort((a, b) => {
+        const aTimeDiff = Math.abs(parseInt(a.createdTime) - tradeTime);
+        const bTimeDiff = Math.abs(parseInt(b.createdTime) - tradeTime);
+        return aTimeDiff - bTimeDiff;
+      });
+      
+      console.log(`Best match by time with same side (${trade.side}): closedPnl=${sameSideMatches[0].closedPnl}, created=${new Date(parseInt(sameSideMatches[0].createdTime)).toISOString()}`);
+      return { match: sameSideMatches[0], matchType: 'same_side_time_match' };
+    }
+    
+    return { match: null, matchType: 'no_side_match' };
+  }
   
   // Filter by quantity (if available)
   if (trade.quantity) {
-    const qtyMatches = sideMatches.filter(pnl => 
-      Math.abs(parseFloat(pnl.qty) - trade.quantity) < 0.000001
-    );
+    const qtyMatches = sideMatches.filter(pnl => {
+      const pnlQty = parseFloat(pnl.qty);
+      const tradeQty = trade.quantity;
+      const qtyDiff = Math.abs(pnlQty - tradeQty);
+      const qtyPct = qtyDiff / tradeQty;
+      return qtyPct < 0.01; // 1% tolerance for quantity differences
+    });
+    
+    console.log(`Found ${qtyMatches.length} trades with matching quantity (within 1%): ${trade.quantity}`);
+    
     if (qtyMatches.length > 0) {
       // Sort by time closest to trade.created_at
       const tradeTime = new Date(trade.created_at).getTime();
@@ -70,6 +109,8 @@ function findBestMatchingPnl(trade, closedPnlList) {
         const bTimeDiff = Math.abs(parseInt(b.createdTime) - tradeTime);
         return aTimeDiff - bTimeDiff;
       });
+      
+      console.log(`Best match by quantity and time: closedPnl=${qtyMatches[0].closedPnl}, created=${new Date(parseInt(qtyMatches[0].createdTime)).toISOString()}`);
       return { match: qtyMatches[0], matchType: 'quantity_time_match' };
     }
   }
@@ -83,6 +124,7 @@ function findBestMatchingPnl(trade, closedPnlList) {
   });
   
   // Return the closest match by time
+  console.log(`Best match by time only: closedPnl=${sideMatches[0].closedPnl}, created=${new Date(parseInt(sideMatches[0].createdTime)).toISOString()}`);
   return { match: sideMatches[0], matchType: 'time_match' };
 }
 
@@ -188,7 +230,7 @@ export default async function handler(request, context) {
       );
     }
     
-    console.log(`Found trade: ${trade.symbol}, order_id: ${trade.order_id}`);
+    console.log(`Found trade: ${trade.symbol}, order_id: ${trade.order_id}, state: ${trade.state}`);
     
     // Skip if already has realized PnL and it's not a test trade
     if (trade.realized_pnl !== null && !trade.bots.test_mode) {
@@ -325,9 +367,7 @@ export default async function handler(request, context) {
     // Choose the endpoint based on account type
     let endpoint = '/v5/position/closed-pnl';
     
-    // If it's a sub-account, adjust the endpoint or parameters as needed
-    // Note: For Bybit, the same endpoint is used but additional parameters
-    // may be needed for sub-accounts. Check the Bybit API documentation for details.
+    // Log account type explicitly
     console.log(`Using account type: ${apiKey.account_type || 'main'}`);
     
     // Implement retry logic with exponential backoff
@@ -340,23 +380,23 @@ export default async function handler(request, context) {
         const timestamp = String(Date.now());
         const recvWindow = '5000';
         
+        // Calculate the time range for search (24 hour window around trade time)
+        const tradeTime = new Date(trade.created_at).getTime();
+        const startTime = tradeTime - (24 * 3600 * 1000); // 24 hours before trade
+       //const endTime = tradeTime + (24 * 3600 * 1000);   // 24 hours after trade
+        
+        console.log(`Using time range: ${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()}`);
+        
         // Parameters for Bybit API call
         const params = new URLSearchParams({
           category: 'linear',
           symbol: trade.symbol,
-          limit: '50',  // Request more to ensure we find our order
+          limit: '100',  // Increased limit to find more potential matches
+          startTime: startTime.toString(),
+          //endTime: endTime.toString(),
           timestamp,
           recv_window: recvWindow
         });
-        
-        // Calculate the time range for fallback matching (1 hour before and after trade creation)
-        const tradeTime = new Date(trade.created_at).getTime();
-        const startTime = tradeTime - (3600 * 1000); // 1 hour before
-        const endTime = tradeTime + (3600 * 1000); // 1 hour after
-        
-        // Add time filters to narrow down results for better matching
-        params.append('startTime', startTime.toString());
-        params.append('endTime', endTime.toString());
         
         // Add sub-account parameter if needed
         if (apiKey.account_type === 'sub') {
@@ -411,7 +451,16 @@ export default async function handler(request, context) {
           throw new Error(`Bybit API error: ${data.retMsg}`);
         }
         
-        console.log('Bybit API response:', JSON.stringify(data));
+        console.log(`Bybit API response: retCode=${data.retCode}, retMsg=${data.retMsg}, list length=${data.result.list.length}`);
+        
+        // Log a few details of the response for debugging
+        if (data.result.list.length > 0) {
+          console.log(`First few closed PnL records:`);
+          data.result.list.slice(0, 3).forEach((pnl, idx) => {
+            console.log(`[${idx}] symbol=${pnl.symbol}, side=${pnl.side}, orderId=${pnl.orderId}, qty=${pnl.qty}, createdTime=${new Date(parseInt(pnl.createdTime)).toISOString()}`);
+          });
+        }
+        
         bybitApiData = data;
         break; // Success - exit retry loop
         
