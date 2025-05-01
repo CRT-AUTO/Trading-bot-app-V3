@@ -117,8 +117,8 @@ const TradeHistory: React.FC = () => {
 
   // Function to manually update trade PnL
   const handleManualUpdate = async (trade: Trade) => {
-    if (trade.state !== 'open') {
-      alert('This trade is already closed and cannot be updated.');
+    if (trade.realized_pnl !== null && trade.realized_pnl !== undefined) {
+      alert('This trade already has PnL data.');
       return;
     }
 
