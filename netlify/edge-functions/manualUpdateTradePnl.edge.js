@@ -545,41 +545,6 @@ export default async function handler(request, context) {
     const closedPnlList = bybitApiData.result.list || [];
     console.log(`Found ${closedPnlList.length} closed PnL records from Bybit API`);
     
-    if (closedPnlList.length === 0) {
-      console.log(`No closed PnL records found for trade ${tradeId}`);
-      
-      await logEvent(
-        supabase,
-        'warning',
-        'No closed PnL records found in Bybit API response',
-        { 
-          order_id: trade.order_id,
-          symbol: trade.symbol,
-          side: trade.side,
-          bybit_response: bybitApiData,
-          trade_id: tradeId
-        },
-        tradeId,
-        trade.bot_id,
-        trade.user_id
-      );
-      
-      return new Response(
-        JSON.stringify({ 
-          success: false,
-          message: "No closed PnL records found",
-          trade_id: tradeId
-        }),
-        {
-          status: 200,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json"
-          }
-        }
-      );
-    }
-    
     // Log PnL records for debugging
     console.log("Available closed PnL records:");
     closedPnlList.forEach((pnl, index) => {
