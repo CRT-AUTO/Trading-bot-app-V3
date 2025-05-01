@@ -1,9 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Bot, Copy, AlertTriangle, RefreshCw, CheckCircle, XCircle, Play, Pause, Trash2, ArrowLeft } from 'lucide-react';
+import { Bot, Copy, AlertTriangle, RefreshCw, CheckCircle, XCircle, Play, Pause, Trash2, ArrowLeft, Key, Info } from 'lucide-react';
 import { useSupabase } from '../contexts/SupabaseContext';
 import { useAuth } from '../contexts/AuthContext';
+
+type ApiKey = {
+  id: string;
+  name: string;
+  exchange: string;
+  account_type: string;
+  is_default: boolean;
+};
 
 type BotFormData = {
   name: string;
@@ -21,6 +29,7 @@ type BotFormData = {
   risk_per_trade: number;
   market_fee_percentage: number;
   limit_fee_percentage: number;
+  api_key_id?: string; // New field for API key selection
 };
 
 interface BotConfigurationProps {
@@ -39,8 +48,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
   const [copySuccess, setCopySuccess] = useState(false);
   const [botStatus, setBotStatus] = useState<'active' | 'paused' | 'error'>('paused');
   const [generateLoading, setGenerateLoading] = useState(false);
-  
-  console.log(`BotConfiguration component mounted. isNew prop: ${isNew}, id param: ${id}`);
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<BotFormData>({
     defaultValues: {
@@ -59,11 +67,37 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
       risk_per_trade: 10,
       market_fee_percentage: 0.075,
       limit_fee_percentage: 0.025,
+      api_key_id: undefined
     }
   });
 
   const watchTestMode = watch('test_mode');
   const watchPositionSizingEnabled = watch('position_sizing_enabled');
+
+  // Fetch API keys
+  useEffect(() => {
+    const fetchApiKeys = async () => {
+      if (!user) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('api_keys')
+          .select('id, name, exchange, account_type, is_default')
+          .eq('user_id', user.id)
+          .eq('exchange', 'bybit')
+          .order('is_default', { ascending: false })
+          .order('created_at', { ascending: true });
+          
+        if (error) throw error;
+        
+        setApiKeys(data || []);
+      } catch (error) {
+        console.error('Error fetching API keys:', error);
+      }
+    };
+    
+    fetchApiKeys();
+  }, [user, supabase]);
 
   // Fetch bot data if editing
   useEffect(() => {
@@ -108,6 +142,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
           setValue('risk_per_trade', botData.risk_per_trade || 10);
           setValue('market_fee_percentage', botData.market_fee_percentage || 0.075);
           setValue('limit_fee_percentage', botData.limit_fee_percentage || 0.025);
+          setValue('api_key_id', botData.api_key_id || undefined);
           
           // Set bot status
           setBotStatus(botData.status || 'paused');
@@ -167,6 +202,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
             risk_per_trade: data.risk_per_trade || 10,
             market_fee_percentage: data.market_fee_percentage || 0.075,
             limit_fee_percentage: data.limit_fee_percentage || 0.025,
+            api_key_id: data.api_key_id || null,
             status: 'paused',
             created_at: new Date().toISOString()
           })
@@ -203,6 +239,7 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
             risk_per_trade: data.risk_per_trade || 10,
             market_fee_percentage: data.market_fee_percentage || 0.075,
             limit_fee_percentage: data.limit_fee_percentage || 0.025,
+            api_key_id: data.api_key_id || null,
             updated_at: new Date().toISOString()
           })
           .eq('id', id)
@@ -243,26 +280,25 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
         const baseUrl = window.location.origin;
         setWebhookUrl(`${baseUrl}/.netlify/functions/processAlert/${existingWebhook.webhook_token}`);
       } else {
-        // Generate a new webhook
-        // In a real app, this would call the Netlify Function
-        // For this demo, we'll simulate it
-        const { data: newWebhook, error } = await supabase
-          .from('webhooks')
-          .insert({
-            user_id: user.id,
-            bot_id: id,
-            webhook_token: generateRandomToken(),
-            expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
-            created_at: new Date().toISOString()
-          })
-          .select()
-          .single();
-          
-        if (error) throw error;
+        // Generate a new webhook via the edge function
+        const response = await fetch('/.netlify/functions/generateWebhook', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userId: user.id,
+            botId: id,
+            expirationDays: 30
+          }),
+        });
         
-        // Set the webhook URL
-        const baseUrl = window.location.origin;
-        setWebhookUrl(`${baseUrl}/.netlify/functions/processAlert/${newWebhook.webhook_token}`);
+        if (!response.ok) {
+          throw new Error(`Failed to generate webhook: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        setWebhookUrl(data.webhookUrl);
       }
     } catch (error) {
       console.error('Error generating webhook:', error);
@@ -417,6 +453,50 @@ const BotConfiguration: React.FC<BotConfigurationProps> = ({ isNew = false }) =>
               />
               {errors.symbol && <p className="mt-1 text-xs text-red-600">{errors.symbol.message}</p>}
             </div>
+          </div>
+
+          {/* API Key Selection */}
+          <div className="mb-6">
+            <label className="flex items-center text-sm font-medium text-gray-700 mb-1">
+              API Key
+              <div className="relative ml-2 group">
+                <Info size={16} className="text-gray-400 cursor-help" />
+                <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 bg-black bg-opacity-75 text-white text-xs rounded p-2 z-10">
+                  Select which API key this bot should use. If not specified, it will use the default API key.
+                </div>
+              </div>
+            </label>
+            <div className="flex items-center space-x-2">
+              <select
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
+                {...register('api_key_id')}
+              >
+                <option value="">Use Default API Key</option>
+                {apiKeys.map((key) => (
+                  <option key={key.id} value={key.id}>
+                    {key.name} {key.is_default && '(Default)'} - {key.account_type === 'main' ? 'Main' : 'Sub'} Account
+                  </option>
+                ))}
+              </select>
+              
+              <button
+                type="button"
+                onClick={() => navigate('/settings')}
+                className="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors flex items-center"
+              >
+                <Key size={16} className="mr-1" />
+                Manage Keys
+              </button>
+            </div>
+
+            {apiKeys.length === 0 && (
+              <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-md flex items-start">
+                <AlertTriangle size={16} className="text-yellow-500 mr-2 mt-0.5" />
+                <p className="text-sm text-yellow-700">
+                  No API keys found. Please add your Bybit API keys in the Account Settings.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
