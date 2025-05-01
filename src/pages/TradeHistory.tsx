@@ -634,7 +634,7 @@ const TradeHistory: React.FC = () => {
                         {trade.order_id.substring(0, 8)}...
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        {trade.state === 'open' && (
+                        {trade.realized_pnl == null && trade.realized_pnl == undefined && (
                           <button
                             onClick={() => handleManualUpdate(trade)}
                             disabled={updatingTradeId === trade.id}
