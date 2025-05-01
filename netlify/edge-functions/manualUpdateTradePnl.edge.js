@@ -234,40 +234,65 @@ export default async function handler(request, context) {
     // Unlike updateTradePnl, we're going to allow this for any trade (open or closed)
     // but we'll check if it's a test trade to handle appropriately
     
-    // Get API credentials
-    const { data: apiKey, error: apiKeyError } = await supabase
+    // Get the appropriate API key for this bot
+    let apiKeyQuery = supabase
       .from('api_keys')
       .select('*')
       .eq('user_id', trade.user_id)
-      .eq('exchange', 'bybit')
-      .single();
-      
-    if (apiKeyError || !apiKey) {
-      console.error("API credentials not found:", apiKeyError);
-      
-      await logEvent(
-        supabase,
-        'error',
-        'API credentials not found for manual PnL update',
-        { error: apiKeyError },
-        tradeId,
-        trade.bot_id,
-        trade.user_id
-      );
-      
-      return new Response(
-        JSON.stringify({ error: "API credentials not found" }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json"
-          }
-        }
-      );
+      .eq('exchange', 'bybit');
+    
+    if (trade.bots.api_key_id) {
+      // If bot has specific API key, use that one
+      apiKeyQuery = apiKeyQuery.eq('id', trade.bots.api_key_id);
+    } else {
+      // Otherwise, use the default API key
+      apiKeyQuery = apiKeyQuery.eq('is_default', true);
     }
     
-    console.log(`API credentials found, account type: ${apiKey.account_type || 'main'}`);
+    const { data: apiKey, error: apiKeyError } = await apiKeyQuery.single();
+    
+    if (apiKeyError || !apiKey) {
+      // If no specific key or default key found, try fetching any key
+      const { data: fallbackKey, error: fallbackError } = await supabase
+        .from('api_keys')
+        .select('*')
+        .eq('user_id', trade.user_id)
+        .eq('exchange', 'bybit')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single();
+      
+      if (fallbackError || !fallbackKey) {
+        console.error("API credentials not found:", apiKeyError);
+        
+        await logEvent(
+          supabase,
+          'error',
+          'API credentials not found for manual PnL update',
+          { error: apiKeyError },
+          tradeId,
+          trade.bot_id,
+          trade.user_id
+        );
+        
+        return new Response(
+          JSON.stringify({ error: "API credentials not found" }),
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json"
+            }
+          }
+        );
+      }
+      
+      // Use fallback key
+      console.log(`Using fallback API key: ${fallbackKey.name}`);
+      apiKey = fallbackKey;
+    } else {
+      console.log(`Using API key: ${apiKey.name} (${apiKey.account_type})`);
+    }
     
     // If it's a test trade, generate a simulated PnL value
     if (trade.bots.test_mode) {
