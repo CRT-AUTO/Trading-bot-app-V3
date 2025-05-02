@@ -382,8 +382,8 @@ export default async function handler(request, context) {
         
         // Calculate the time range for search (24 hour window around trade time)
         const tradeTime = new Date(trade.created_at).getTime();
-        const startTime = tradeTime - (24 * 3600 * 1000); // 24 hours before trade
-       //const endTime = tradeTime + (24 * 3600 * 1000);   // 24 hours after trade
+        const startTime = tradeTime - (1 * 3600 * 1000); // 1 hours before trade
+        const endTime = tradeTime + (167 * 3600 * 1000);   // 7 days after trade
         
         console.log(`Using time range: ${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()}`);
         
@@ -393,7 +393,7 @@ export default async function handler(request, context) {
           symbol: trade.symbol,
           limit: '100',  // Increased limit to find more potential matches
           startTime: startTime.toString(),
-          //endTime: endTime.toString(),
+          endTime: endTime.toString(),
           timestamp,
           recv_window: recvWindow
         });
