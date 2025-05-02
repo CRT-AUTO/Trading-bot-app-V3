@@ -418,8 +418,8 @@ export default async function handler(request, context) {
         // Calculate the time range for fallback matching
         // Use a much wider time window of 24 hours to increase chances of finding the trade
         const tradeTime = new Date(trade.created_at).getTime();
-        const startTime = tradeTime - (24 * 3600 * 1000); // 24 hours before
-        const endTime = tradeTime + (144 * 3600 * 1000); // 24 hours after
+        const startTime = tradeTime - (1 * 3600 * 1000); // 1 hours before
+        const endTime = tradeTime + (167 * 3600 * 1000); // 7 days after
         
         console.log(`Time range for PnL search: 
           Trade time: ${new Date(tradeTime).toISOString()}
