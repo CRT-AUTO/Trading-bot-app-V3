@@ -316,7 +316,7 @@ export default async function handler(request, context) {
       // Simulate exit price
       const exitPrice = trade.price * (1 + (trade.side === 'Buy' ? simulatedPriceMove : -simulatedPriceMove) / 100);
       
-      // Update the trade
+      // Update the trade with the risk amount from the bot
       const { error: updateError } = await supabase
         .from('trades')
         .update({
@@ -325,6 +325,7 @@ export default async function handler(request, context) {
           fees: fees,
           state: 'closed',
           close_reason: 'manual_update',
+          risk_amount: trade.bots.risk_per_trade || 0, // Store the risk amount
           updated_at: new Date().toISOString()
         })
         .eq('id', tradeId);
@@ -368,7 +369,8 @@ export default async function handler(request, context) {
         { 
           trade_id: tradeId,
           realized_pnl: simulatedPnl,
-          test_mode: true 
+          test_mode: true,
+          risk_amount: trade.bots.risk_per_trade || 0
         },
         tradeId,
         trade.bot_id,
@@ -382,7 +384,8 @@ export default async function handler(request, context) {
           trade_id: tradeId,
           realized_pnl: simulatedPnl,
           exit_price: exitPrice,
-          test_mode: true
+          test_mode: true,
+          risk_amount: trade.bots.risk_per_trade || 0
         }),
         {
           status: 200,
@@ -418,8 +421,8 @@ export default async function handler(request, context) {
         // Calculate the time range for fallback matching
         // Use a much wider time window of 24 hours to increase chances of finding the trade
         const tradeTime = new Date(trade.created_at).getTime();
-        const startTime = tradeTime - (1 * 3600 * 1000); // 1 hours before
-        const endTime = tradeTime + (167 * 3600 * 1000); // 7 days after
+        const startTime = tradeTime - (24 * 3600 * 1000); // 24 hours before
+        const endTime = tradeTime + (24 * 3600 * 1000); // 24 hours after
         
         console.log(`Time range for PnL search: 
           Trade time: ${new Date(tradeTime).toISOString()}
@@ -608,6 +611,7 @@ export default async function handler(request, context) {
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
         fees: fees,
+        risk_amount: trade.bots.risk_per_trade || 0, // Store the risk amount from bot configuration
         state: 'closed',
         close_reason: 'manual_update',
         details: {
@@ -676,6 +680,7 @@ export default async function handler(request, context) {
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
         match_type: matchType,
+        risk_amount: trade.bots.risk_per_trade || 0,
         manual: true
       },
       tradeId,
@@ -690,7 +695,8 @@ export default async function handler(request, context) {
         realized_pnl: realizedPnl,
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
-        match_type: matchType
+        match_type: matchType,
+        risk_amount: trade.bots.risk_per_trade || 0
       }),
       {
         status: 200,
