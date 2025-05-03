@@ -1,6 +1,6 @@
 import React from 'react';
-import { Bot, AlertTriangle, Code, Copy, CheckCircle } from 'lucide-react';
 import { useState } from 'react';
+import { Bot, AlertTriangle, Code, Copy, CheckCircle, ArrowRight, Github, BookOpen } from 'lucide-react';
 
 const Documentation: React.FC = () => {
   const [copySuccess, setCopySuccess] = useState<Record<string, boolean>>({});
@@ -41,7 +41,65 @@ const Documentation: React.FC = () => {
   "price": 50000, 
   "stopLoss": 49000,
   "state": "open"
-}`
+}`,
+    tradingViewStrategy: `//─────────────────────────────
+// ALERT MESSAGE FOR JSON OUTPUT
+//────────────────────────────-------------
+// For Long Trades:
+if strategy.position_size > 0 and strategy.position_size[1] <= 0 and not na(lockedLongTP) and not na(longStopFixed)
+    jsonMsg = "{" +
+              "\"symbol\": \"" + syminfo.ticker + "\", " +
+              "\"side\": \"Buy\", " +
+              "\"orderType\": \"Market\", " +
+              "\"quantity\": \"" + str.tostring(strategy.position_size) + "\", " +
+              "\"price\": \"" + str.tostring(close, format.mintick) + "\", " +
+              "\"stopLoss\": " + str.tostring(longStopFixed, format.mintick) + ", " +
+              "\"takeProfit\": " + str.tostring(lockedLongTP, format.mintick) + ", " +
+              "\"state\": \"open\", " +
+              "\"bot_name\": \"-----\", " +
+              "\"webhook_url\": \"-----\"" +
+              "}"
+    alert(jsonMsg, alert.freq_once_per_bar)
+
+if strategy.position_size == 0 and strategy.position_size[1] > 0
+    jsonMsg = "{" +
+              "\"symbol\": \"" + syminfo.ticker + "\", " +
+              "\"side\": \"Sell\", " +
+              "\"quantity\": \"" + str.tostring(strategy.position_size[1]) + "\", " +
+              "\"price\": \"" + str.tostring(close, format.mintick) + "\", " +
+              "\"state\": \"close\", " +
+              "\"bot_name\": \"-----\", " +
+              "\"webhook_url\": \"-----\"" +
+              "}"
+    alert(jsonMsg, alert.freq_once_per_bar)
+
+// For Short Trades:
+if strategy.position_size < 0 and strategy.position_size[1] >= 0 and not na(lockedShortTP) and not na(shortStopFixed)
+    jsonMsg = "{" +
+              "\"symbol\": \"" + syminfo.ticker + "\", " +
+              "\"side\": \"Sell\", " +
+              "\"orderType\": \"Market\", " +
+              "\"quantity\": \"" + str.tostring(math.abs(strategy.position_size)) + "\", " +
+              "\"price\": \"" + str.tostring(close, format.mintick) + "\", " +
+              "\"stopLoss\": " + str.tostring(shortStopFixed, format.mintick) + ", " +
+              "\"takeProfit\": " + str.tostring(lockedShortTP, format.mintick) + ", " +
+              "\"state\": \"open\", " +
+              "\"bot_name\": \"-----\", " +
+              "\"webhook_url\": \"-----\"" +
+              "}"
+    alert(jsonMsg, alert.freq_once_per_bar)
+
+if strategy.position_size == 0 and strategy.position_size[1] < 0
+    jsonMsg = "{" +
+              "\"symbol\": \"" + syminfo.ticker + "\", " +
+              "\"side\": \"Buy\", " +
+              "\"quantity\": \"" + str.tostring(strategy.position_size[1]) + "\", " +
+              "\"price\": \"" + str.tostring(close, format.mintick) + "\", " +
+              "\"state\": \"close\", " +
+              "\"bot_name\": \"-----\", " +
+              "\"webhook_url\": \"-----\"" +
+              "}"
+    alert(jsonMsg, alert.freq_once_per_bar)`
   };
 
   return (
@@ -176,6 +234,35 @@ const Documentation: React.FC = () => {
             >
               {copySuccess['positionSizing'] ? <CheckCircle size={16} /> : <Copy size={16} />}
             </button>
+          </div>
+          
+          <h3 className="font-medium text-lg mt-6">TradingView Strategy Code</h3>
+          <p className="text-gray-700 mb-2">
+            Copy and paste this code into your TradingView Pine Script strategy to automatically generate the correct JSON format for alerts:
+          </p>
+          
+          <div className="relative">
+            <pre className="bg-gray-800 text-gray-200 p-4 rounded-md text-sm overflow-x-auto">
+              {codeSnippets.tradingViewStrategy}
+            </pre>
+            <button
+              onClick={() => copyToClipboard(codeSnippets.tradingViewStrategy, 'strategy')}
+              className="absolute top-2 right-2 p-1.5 bg-gray-700 text-gray-200 rounded-md hover:bg-gray-600 transition-colors"
+              aria-label="Copy code"
+            >
+              {copySuccess['strategy'] ? <CheckCircle size={16} /> : <Copy size={16} />}
+            </button>
+          </div>
+          
+          <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+            <h4 className="font-medium text-blue-800 mb-2">How to Implement the Strategy Code</h4>
+            <ol className="list-decimal list-inside text-sm text-blue-700">
+              <li className="mb-2">Add this code at the end of your TradingView strategy</li>
+              <li className="mb-2">Replace <code>"SUPER15"</code> with your bot's name</li>
+              <li className="mb-2">Ensure your strategy defines <code>lockedLongTP</code>, <code>longStopFixed</code>, <code>lockedShortTP</code>, and <code>shortStopFixed</code> variables</li>
+              <li className="mb-2">Adapt conditional checks based on your strategy's entry/exit logic</li>
+              <li>Set alerts to trigger "Once Per Bar Close" for consistent execution</li>
+            </ol>
           </div>
           
           <div className="flex items-start p-4 bg-blue-50 border border-blue-200 rounded-md mt-4">
