@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSupabase } from '../contexts/SupabaseContext';
 import { useAuth } from '../contexts/AuthContext';
 import { format } from 'date-fns';
-import { RefreshCw, Search, Filter, Download, ArrowUp, ArrowDown } from 'lucide-react';
+import { RefreshCw, Search, Filter, Download, ArrowUp, ArrowDown, Info } from 'lucide-react';
 
 type TradeMetrics = {
   targetRR: number;
@@ -15,6 +15,11 @@ type TradeMetrics = {
   maxRisk: number;
   positionNotional: number;
   riskPerUnit: number;
+  symbol?: string;
+  side?: string;
+  wantedEntry?: number;
+  stopLoss?: number;
+  takeProfit?: number;
 };
 
 type Trade = {
@@ -32,6 +37,7 @@ type Trade = {
   realized_pnl?: number;
   unrealized_pnl?: number;
   fees?: number;
+  slippage?: number;
   state?: string;
   stop_loss?: number;
   take_profit?: number;
@@ -40,8 +46,12 @@ type Trade = {
   avg_exit_price?: number;
   exit_price?: number;
   updated_at?: string;
+  details?: any;
   trade_metrics?: TradeMetrics;
+  risk_amount?: number;
 };
+
+type TimeRange = '1w' | '1m' | '3m' | 'all';
 
 const TradeHistory: React.FC = () => {
   const { supabase } = useSupabase();
@@ -53,7 +63,7 @@ const TradeHistory: React.FC = () => {
   const [botFilter, setBotFilter] = useState('');
   const [stateFilter, setStateFilter] = useState('');
   const [uniqueSymbols, setUniqueSymbols] = useState<string[]>([]);
-  const [uniqueBots, setUniqueBots] = useState<{id: string; name: string}[]>([]);
+  const [uniqueBots, setUniqueBots] = useState<{id: string, name: string}[]>([]);
   const [totalPnl, setTotalPnl] = useState(0);
   const [sortField, setSortField] = useState<string>('created_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -167,6 +177,41 @@ const TradeHistory: React.FC = () => {
     setShowMetricsModal(true);
   };
 
+  // Calculate R Multiple (Risk Multiple) for a trade
+  const calculateRMultiple = (trade: Trade): string => {
+    // If we have the trade metrics with finishedRR, use it directly
+    if (trade.trade_metrics?.finishedRR !== undefined) {
+      return `${trade.trade_metrics.finishedRR.toFixed(2)}R`;
+    }
+    
+    // If we have risk_amount stored directly in the trade, use that
+    if (trade.risk_amount && trade.risk_amount > 0 && trade.realized_pnl !== undefined) {
+      const rMultiple = trade.realized_pnl / trade.risk_amount;
+      return `${rMultiple.toFixed(2)}R`;
+    }
+    
+    // Otherwise calculate it manually if we have entry, stop, and PnL
+    const entryPrice = trade.avg_entry_price || trade.price;
+    const stopLoss = trade.stop_loss;
+    const pnl = trade.realized_pnl || 0;
+    
+    if (!entryPrice || !stopLoss || stopLoss === 0) {
+      return '-';
+    }
+    
+    const riskPerUnit = Math.abs(entryPrice - stopLoss);
+    const positionValue = entryPrice * trade.quantity;
+    const maxRiskAmount = riskPerUnit * trade.quantity;
+    
+    if (maxRiskAmount <= 0) {
+      return '-';
+    }
+    
+    // PnL / Risk Amount = R multiple
+    const rMultiple = pnl / maxRiskAmount;
+    return `${rMultiple.toFixed(2)}R`;
+  };
+
   // Sort trades
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -232,6 +277,12 @@ const TradeHistory: React.FC = () => {
       return sortDirection === 'asc' ? aFees - bFees : bFees - aFees;
     }
 
+    if (sortField === 'risk_amount') {
+      const aRisk = a.risk_amount || (a.trade_metrics?.maxRisk || 0);
+      const bRisk = b.risk_amount || (b.trade_metrics?.maxRisk || 0);
+      return sortDirection === 'asc' ? aRisk - bRisk : bRisk - aRisk;
+    }
+
     if (sortField === 'trade_metrics.targetRR') {
       const aRR = a.trade_metrics?.targetRR || 0;
       const bRR = b.trade_metrics?.targetRR || 0;
@@ -250,6 +301,13 @@ const TradeHistory: React.FC = () => {
       return sortDirection === 'asc' ? aTime - bTime : bTime - aTime;
     }
     
+    if (sortField === 'r_multiple') {
+      // Sort by R multiple - extract the numeric part from the string and convert to number
+      const aR = parseFloat(calculateRMultiple(a).replace('R', '')) || 0;
+      const bR = parseFloat(calculateRMultiple(b).replace('R', '')) || 0;
+      return sortDirection === 'asc' ? aR - bR : bR - aR;
+    }
+    
     // Default case, sort by string fields
     const aValue = (a as any)[sortField]?.toString() || '';
     const bValue = (b as any)[sortField]?.toString() || '';
@@ -264,8 +322,8 @@ const TradeHistory: React.FC = () => {
     
     const headers = [
       'Date', 'Bot', 'Symbol', 'Side', 'Type', 'Price', 'Quantity', 
-      'Entry Price', 'Exit Price', 'P/L', 'Fees', 
-      'Stop Loss', 'Take Profit', 'Status', 'State', 'Close Reason', 'Order ID',
+      'Entry Price', 'Exit Price', 'P/L', 'P/L (R)', 'Fees', 
+      'Risk', 'Stop Loss', 'Take Profit', 'Status', 'State', 'Close Reason', 'Order ID',
       'Target R:R', 'Actual R:R', 'Trade Duration', 'Slippage', 'Max Risk'
     ];
     const csvRows = [
@@ -281,7 +339,9 @@ const TradeHistory: React.FC = () => {
         trade.avg_entry_price || trade.price || '',
         trade.avg_exit_price || trade.exit_price || '',
         trade.realized_pnl || 0,
+        calculateRMultiple(trade),
         trade.fees || 0,
+        trade.risk_amount || trade.trade_metrics?.maxRisk || 0,
         trade.stop_loss || '',
         trade.take_profit || '',
         trade.status,
@@ -343,7 +403,7 @@ const TradeHistory: React.FC = () => {
                 className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md"
               />
             </div>
-          </div>
+           </div>
           
           <div className="flex flex-wrap gap-4">
             <div className="w-40">
@@ -496,7 +556,19 @@ const TradeHistory: React.FC = () => {
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                       onClick={() => handleSort('realized_pnl')}
                     >
-                      P/L {renderSortIndicator('realized_pnl')}
+                      P/L $ {renderSortIndicator('realized_pnl')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('r_multiple')}
+                    >
+                      P/L R {renderSortIndicator('r_multiple')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('risk_amount')}
+                    >
+                      Risk {renderSortIndicator('risk_amount')}
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
@@ -520,7 +592,19 @@ const TradeHistory: React.FC = () => {
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                       onClick={() => handleSort('trade_metrics.targetRR')}
                     >
-                      R:R {renderSortIndicator('trade_metrics.targetRR')}
+                      Target R:R {renderSortIndicator('trade_metrics.targetRR')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('trade_metrics.finishedRR')}
+                    >
+                      Actual R:R {renderSortIndicator('trade_metrics.finishedRR')}
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                      onClick={() => handleSort('trade_metrics.totalTradeTimeSeconds')}
+                    >
+                      Duration {renderSortIndicator('trade_metrics.totalTradeTimeSeconds')}
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
@@ -567,7 +651,7 @@ const TradeHistory: React.FC = () => {
                           {trade.side}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {trade.order_type}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -592,6 +676,16 @@ const TradeHistory: React.FC = () => {
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span className={`font-medium ${
+                          parseFloat(calculateRMultiple(trade)) >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {calculateRMultiple(trade)}
+                        </span>
+                      </td>
+                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.risk_amount?.toFixed(2) || trade.trade_metrics?.maxRisk?.toFixed(2) || '-'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {trade.fees ? trade.fees.toFixed(4) : '-'}
                       </td>
@@ -602,14 +696,16 @@ const TradeHistory: React.FC = () => {
                         {trade.take_profit ? trade.take_profit.toFixed(2) : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {trade.trade_metrics ? (
-                          <button
-                            onClick={() => showTradeMetrics(trade)}
-                            className="text-blue-600 hover:text-blue-800 underline"
-                          >
-                            {trade.trade_metrics.targetRR ? trade.trade_metrics.targetRR.toFixed(2) : '-'}
-                          </button>
-                        ) : '-'}
+                        {trade.trade_metrics?.targetRR ? trade.trade_metrics.targetRR.toFixed(2) : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.trade_metrics?.finishedRR ? trade.trade_metrics.finishedRR.toFixed(2) : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {trade.trade_metrics?.formattedTradeTime || 
+                        (trade.trade_metrics?.totalTradeTimeSeconds ? 
+                          Math.floor(trade.trade_metrics.totalTradeTimeSeconds / 60) + ' min' : 
+                          '-')}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -634,7 +730,7 @@ const TradeHistory: React.FC = () => {
                         {trade.order_id.substring(0, 8)}...
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        {trade.realized_pnl == null && trade.realized_pnl == undefined && (
+                        {trade.realized_pnl === null || trade.realized_pnl === undefined ? (
                           <button
                             onClick={() => handleManualUpdate(trade)}
                             disabled={updatingTradeId === trade.id}
@@ -649,6 +745,13 @@ const TradeHistory: React.FC = () => {
                               'Update PnL'
                             )}
                           </button>
+                        ) : (
+                          <button
+                            onClick={() => showTradeMetrics(trade)}
+                            className="text-blue-600 hover:text-blue-900 flex items-center"
+                          >
+                            <Info size={14} className="mr-1" /> Details
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -661,11 +764,11 @@ const TradeHistory: React.FC = () => {
       )}
 
       {/* Trade Metrics Modal */}
-      {showMetricsModal && selectedTrade && selectedTrade.trade_metrics && (
+      {showMetricsModal && selectedTrade && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-xl font-bold">Trade Metrics: {selectedTrade.symbol}</h3>
+              <h3 className="text-xl font-bold">Trade Details: {selectedTrade.symbol}</h3>
               <button 
                 onClick={() => setShowMetricsModal(false)}
                 className="text-gray-500 hover:text-gray-700"
@@ -673,7 +776,7 @@ const TradeHistory: React.FC = () => {
                 &times;
               </button>
             </div>
-            <div className="p-6">
+            <div className="p-4">
               <div className="grid grid-cols-2 gap-4">
                 {/* Basic Trade Info */}
                 <div className="col-span-2 mb-2 pb-2 border-b">
@@ -702,7 +805,7 @@ const TradeHistory: React.FC = () => {
                   <div className="grid grid-cols-3 gap-2">
                     <div>
                       <p className="text-sm text-gray-500">Planned Entry</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.wantedEntry?.toFixed(2)}</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.wantedEntry?.toFixed(2) || selectedTrade.price?.toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Actual Entry</p>
@@ -722,7 +825,7 @@ const TradeHistory: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Slippage</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.slippage?.toFixed(6) || '0'}</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.slippage?.toFixed(6) || selectedTrade.slippage?.toFixed(6) || '0'}</p>
                     </div>
                   </div>
                 </div>
@@ -732,30 +835,34 @@ const TradeHistory: React.FC = () => {
                   <h4 className="text-lg font-semibold mb-2">Risk & Reward</h4>
                   <div className="grid grid-cols-3 gap-2">
                     <div>
-                      <p className="text-sm text-gray-500">Max Risk</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.maxRisk?.toFixed(2)} USDT</p>
+                     <p className="text-sm text-gray-500">Max Risk</p>
+                     <p className="text-md font-medium">{selectedTrade.risk_amount?.toFixed(2) || selectedTrade.trade_metrics?.maxRisk?.toFixed(2) || '-'} USDT</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Risk per Unit</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.riskPerUnit?.toFixed(6)}</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.riskPerUnit?.toFixed(6) || 
+                        (selectedTrade.stop_loss ? Math.abs(selectedTrade.price - selectedTrade.stop_loss).toFixed(6) : '-')}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Position Value</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.positionNotional?.toFixed(2)} USDT</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.positionNotional?.toFixed(2) || 
+                        (selectedTrade.price * selectedTrade.quantity).toFixed(2)} USDT</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Target R:R</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.targetRR?.toFixed(2)}</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.targetRR?.toFixed(2) || '-'}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Actual R:R</p>
-                      <p className={`text-md font-medium ${selectedTrade.trade_metrics.finishedRR >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {selectedTrade.trade_metrics.finishedRR?.toFixed(2)}
+                      <p className={`text-md font-medium ${
+                        (selectedTrade.trade_metrics?.finishedRR || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {selectedTrade.trade_metrics?.finishedRR?.toFixed(2) || calculateRMultiple(selectedTrade)}
                       </p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Risk Deviation %</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.deviationPercentFromMaxRisk?.toFixed(2)}%</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.deviationPercentFromMaxRisk?.toFixed(2) || '0'}%</p>
                     </div>
                   </div>
                 </div>
@@ -766,20 +873,37 @@ const TradeHistory: React.FC = () => {
                   <div className="grid grid-cols-3 gap-2">
                     <div>
                       <p className="text-sm text-gray-500">Trade Duration</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.formattedTradeTime}</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.formattedTradeTime || 
+                        (selectedTrade.updated_at ? 
+                          Math.floor((new Date(selectedTrade.updated_at).getTime() - new Date(selectedTrade.created_at).getTime()) / 60000) + ' min' 
+                          : '-')}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Total Fees</p>
-                      <p className="text-md font-medium">{selectedTrade.trade_metrics.totalFees?.toFixed(4) || selectedTrade.fees?.toFixed(4) || '0'} USDT</p>
+                      <p className="text-md font-medium">{selectedTrade.trade_metrics?.totalFees?.toFixed(4) || selectedTrade.fees?.toFixed(4) || '0'} USDT</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Final P/L</p>
                       <p className={`text-md font-medium ${selectedTrade.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {selectedTrade.realized_pnl?.toFixed(2) || '0'} USDT
+                        {selectedTrade.realized_pnl?.toFixed(2) || '0'} USDT ({calculateRMultiple(selectedTrade)})
                       </p>
                     </div>
                   </div>
                 </div>
+
+                {/* Trade Details JSON */}
+                {selectedTrade.details && (
+                  <div className="col-span-2 mt-2 pt-2 border-t">
+                    <h4 className="text-lg font-semibold mb-2 flex justify-between items-center">
+                      <span>Raw Trade Details</span>
+                    </h4>
+                    <div className="bg-gray-100 p-3 rounded-md overflow-x-auto max-h-40">
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words">
+                        {JSON.stringify(selectedTrade.details, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div className="p-4 border-t bg-gray-50">
