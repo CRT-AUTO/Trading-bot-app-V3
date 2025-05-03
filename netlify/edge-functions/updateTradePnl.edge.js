@@ -551,6 +551,8 @@ export default async function handler(request, context) {
       const actualEntry = avgEntryPrice || trade.price || 0;
       const takeProfit = trade.take_profit || 0;
       const stopLoss = trade.stop_loss || 0;
+      
+      // Use the risk_per_trade from the bot configuration
       const maxRisk = trade.bots?.risk_per_trade || 10; // Default to 10 USDT if not set
       const openFee = trade.fees || 0; // Use existing fees or assume 0
       const closeTime = Date.now();
@@ -603,7 +605,7 @@ export default async function handler(request, context) {
       );
     }
     
-    // Update the trade with PnL data
+    // Update the trade with PnL data and store the risk amount
     const { error: updateError } = await supabase
       .from('trades')
       .update({
@@ -611,6 +613,7 @@ export default async function handler(request, context) {
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
         fees: fees,
+        risk_amount: trade.bots?.risk_per_trade || 0, // Store the risk amount from the bot configuration
         details: {
           ...matchingPnl,
           pnl_match_type: matchType
@@ -677,7 +680,8 @@ export default async function handler(request, context) {
         realized_pnl: realizedPnl,
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
-        match_type: matchType
+        match_type: matchType,
+        risk_amount: trade.bots?.risk_per_trade || 0
       },
       tradeId,
       trade.bot_id,
@@ -691,7 +695,8 @@ export default async function handler(request, context) {
         realized_pnl: realizedPnl,
         avg_entry_price: avgEntryPrice,
         avg_exit_price: avgExitPrice,
-        match_type: matchType
+        match_type: matchType,
+        risk_amount: trade.bots?.risk_per_trade || 0
       }),
       {
         status: 200,
