@@ -571,6 +571,7 @@ export default async function handler(request, context) {
           close_reason: closeReason,
           realized_pnl: realizedPnl,
           exit_price: closeResult ? closeResult.price : null,
+          risk_amount: bot.risk_per_trade || 0, // Store the risk amount
           trade_metrics: tradeMetrics,
           updated_at: new Date().toISOString()
         })
@@ -1095,6 +1096,7 @@ export default async function handler(request, context) {
           state: 'open',
           stop_loss: stopLoss,
           take_profit: takeProfit,
+          risk_amount: bot.risk_per_trade || 0, // Store the risk amount directly
           created_at: new Date().toISOString()
         });
         
@@ -1147,7 +1149,8 @@ export default async function handler(request, context) {
         'Trade processing completed successfully',
         { 
           order_id: orderResult.orderId,
-          status: orderResult.status
+          status: orderResult.status,
+          risk_amount: bot.risk_per_trade || 0
         },
         webhook.id,
         webhook.bot_id,
@@ -1162,7 +1165,8 @@ export default async function handler(request, context) {
           status: orderResult.status,
           testMode: bot.test_mode,
           pnl: realizedPnl,
-          fees: fees
+          fees: fees,
+          risk_amount: bot.risk_per_trade || 0
         }),
         {
           status: 200,
