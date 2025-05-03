@@ -357,11 +357,38 @@ export default async function handler(request, context) {
       
       let closeResult = null;
       let realizedPnl = alertData.realized_pnl || null;
-      let closeReason = 'signal';
       
-      // Check if we need to execute an order (if TP/SL wasn't set originally)
-      if (!openTrade.stop_loss && !openTrade.take_profit) {
-        console.log("No TP/SL was set, executing close order");
+      // Enhanced close reason detection
+      let closeReason = alertData.close_reason || 'signal'; // Default to 'signal' if not provided
+      
+      if (alertData.close_reason) {
+        closeReason = alertData.close_reason; // Use provided reason if available
+      } else if (alertData.price && openTrade.stop_loss && 
+                ((openTrade.side === 'Buy' && alertData.price <= openTrade.stop_loss) || 
+                 (openTrade.side === 'Sell' && alertData.price >= openTrade.stop_loss))) {
+        closeReason = 'stop_loss_hit';
+      } else if (alertData.price && openTrade.take_profit && 
+                ((openTrade.side === 'Buy' && alertData.price >= openTrade.take_profit) || 
+                 (openTrade.side === 'Sell' && alertData.price <= openTrade.take_profit))) {
+        closeReason = 'take_profit_hit';
+      } else if (alertData.is_liquidation) {
+        closeReason = 'liquidation';
+      }
+      
+      // Handle partial closures
+      let closeQuantity = openTrade.quantity;
+      let isPartialClose = false;
+      
+      if (alertData.close_quantity && alertData.close_quantity < openTrade.quantity) {
+        closeQuantity = alertData.close_quantity;
+        isPartialClose = true;
+        closeReason = 'partial_close';
+      }
+      
+      // Check if we need to execute an order (if TP/SL wasn't set originally or it's a manual close)
+      if (!openTrade.stop_loss && !openTrade.take_profit || 
+          closeReason === 'signal' || closeReason === 'partial_close') {
+        console.log("No TP/SL was set or manual close requested, executing close order");
         
         // Determine closing side (opposite of the open trade)
         const closeSide = openTrade.side === 'Buy' ? 'Sell' : 'Buy';
@@ -373,7 +400,7 @@ export default async function handler(request, context) {
           symbol: symbol,
           side: closeSide,
           orderType: 'Market',
-          quantity: openTrade.quantity,
+          quantity: closeQuantity,
           testnet: bot.test_mode
         };
         
@@ -400,9 +427,9 @@ export default async function handler(request, context) {
             // For buys: (close_price - open_price) * quantity
             // For sells: (open_price - close_price) * quantity
             if (openTrade.side === 'Buy') {
-              realizedPnl = (closeResult.price - openTrade.price) * openTrade.quantity;
+              realizedPnl = (closeResult.price - openTrade.price) * closeQuantity;
             } else {
-              realizedPnl = (openTrade.price - closeResult.price) * openTrade.quantity;
+              realizedPnl = (openTrade.price - closeResult.price) * closeQuantity;
             }
             
             // Simulate fees (typically 0.1% of trade value)
@@ -429,9 +456,9 @@ export default async function handler(request, context) {
             // If the API doesn't return PnL, we calculate it
             if (!realizedPnl) {
               if (openTrade.side === 'Buy') {
-                realizedPnl = (closeResult.price - openTrade.price) * openTrade.quantity;
+                realizedPnl = (closeResult.price - openTrade.price) * closeQuantity;
               } else {
-                realizedPnl = (openTrade.price - closeResult.price) * openTrade.quantity;
+                realizedPnl = (openTrade.price - closeResult.price) * closeQuantity;
               }
               
               // Approximate fees (0.1% of the total trade value)
@@ -482,8 +509,7 @@ export default async function handler(request, context) {
           );
         }
       } else {
-        console.log("TP/SL was set, assuming exchange handled the closure");
-        closeReason = alertData.close_reason || 'take_profit';
+        console.log(`TP/SL was set, assuming exchange handled the closure via ${closeReason}`);
         
         await logEvent(
           supabase,
@@ -564,37 +590,88 @@ export default async function handler(request, context) {
       
       // Update the trade record
       console.log(`Updating trade ${openTrade.id} with realized PnL: ${realizedPnl}`);
-      const { error: updateError } = await supabase
-        .from('trades')
-        .update({
-          state: 'closed',
-          close_reason: closeReason,
-          realized_pnl: realizedPnl,
-          exit_price: closeResult ? closeResult.price : null,
-          risk_amount: bot.risk_per_trade || 0, // Store the risk amount
-          trade_metrics: tradeMetrics,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', openTrade.id);
       
-      if (updateError) {
-        console.error("Error updating trade:", updateError);
+      // For partial closes, we need special handling
+      if (isPartialClose) {
+        // For partial closure, don't update state or add metrics yet
+        // Instead, reduce the quantity and track partial profit
+        const { error: updateError } = await supabase
+          .from('trades')
+          .update({
+            quantity: openTrade.quantity - closeQuantity,
+            realized_pnl: (openTrade.realized_pnl || 0) + realizedPnl, // Accumulate partial profits
+            exit_price: closeResult ? closeResult.price : alertData.price,
+            risk_amount: bot.risk_per_trade || 0, // Store the risk amount
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', openTrade.id);
         
+        if (updateError) {
+          console.error("Error updating partial trade closure:", updateError);
+          
+          await logEvent(
+            supabase,
+            'error',
+            'Failed to update trade for partial closure',
+            { 
+              error: updateError,
+              trade_id: openTrade.id
+            },
+            webhook.id,
+            webhook.bot_id,
+            webhook.user_id
+          );
+        }
+        
+        // Log the partial close
         await logEvent(
           supabase,
-          'error',
-          'Failed to update trade record',
+          'info',
+          'Trade partially closed',
           { 
-            error: updateError,
-            trade_id: openTrade.id
+            trade_id: openTrade.id,
+            closed_quantity: closeQuantity,
+            remaining_quantity: openTrade.quantity - closeQuantity,
+            partial_pnl: realizedPnl
           },
           webhook.id,
           webhook.bot_id,
           webhook.user_id
         );
+      } else {
+        // For full closures, update all fields including state
+        const { error: updateError } = await supabase
+          .from('trades')
+          .update({
+            state: 'closed',
+            close_reason: closeReason,
+            realized_pnl: realizedPnl,
+            exit_price: closeResult ? closeResult.price : alertData.price,
+            risk_amount: bot.risk_per_trade || 0, // Store the risk amount
+            trade_metrics: tradeMetrics,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', openTrade.id);
+        
+        if (updateError) {
+          console.error("Error updating trade:", updateError);
+          
+          await logEvent(
+            supabase,
+            'error',
+            'Failed to update trade record',
+            { 
+              error: updateError,
+              trade_id: openTrade.id
+            },
+            webhook.id,
+            webhook.bot_id,
+            webhook.user_id
+          );
+        }
       }
       
-      // Update bot's profit/loss
+      // Update bot's profit/loss - do this for both full and partial closures
       if (realizedPnl) {
         console.log(`Updating bot's profit/loss with: ${realizedPnl}`);
         const { error: botUpdateError } = await supabase
@@ -624,8 +701,8 @@ export default async function handler(request, context) {
         }
       }
       
-      // If this is a real trade (not test mode), trigger PnL update from Bybit API
-      if (!bot.test_mode) {
+      // If this is a real trade (not test mode) and a full closure, trigger PnL update from Bybit API
+      if (!bot.test_mode && !isPartialClose) {
         try {
           console.log("Triggering PnL update from Bybit API");
           const pnlUpdateResult = await updateTradePnl(openTrade.id, request);
@@ -654,10 +731,11 @@ export default async function handler(request, context) {
       return new Response(
         JSON.stringify({
           success: true,
-          message: "Trade closed successfully",
+          message: isPartialClose ? "Trade partially closed" : "Trade closed successfully",
           tradeId: openTrade.id,
           realizedPnl: realizedPnl,
-          closeReason: closeReason
+          closeReason: closeReason,
+          isPartialClose: isPartialClose
         }),
         {
           status: 200,
