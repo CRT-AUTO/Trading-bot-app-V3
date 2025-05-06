@@ -439,10 +439,11 @@ async function processOpenTrade(supabase, bot, webhook, alertData, apiKey, reque
       };
     }
     
-    // Calculate PnL (for test orders, we'll simulate a reasonable value)
+    // Initialize variables for test mode
     let realizedPnl = null;
-    let fees = 0;
+    let fees = null;
     
+    // Calculate PnL for test orders only
     if (bot.test_mode) {
       // Simulate a realistic PnL for test orders (random value between -2% and +2%)
       const simulatedPriceChange = (Math.random() * 4) - 2; // Between -2% and +2%
@@ -467,26 +468,34 @@ async function processOpenTrade(supabase, bot, webhook, alertData, apiKey, reque
     
     // Log the trade
     console.log("Logging trade to database...");
-    const { data: tradeData, error: tradeError } = await supabase
+    
+    // Prepare the trade data object
+    const tradeData = {
+      user_id: webhook.user_id,
+      bot_id: webhook.bot_id,
+      symbol: orderResult.symbol,
+      side: orderResult.side,
+      order_type: orderResult.orderType,
+      quantity: orderResult.qty,
+      price: orderResult.price,
+      order_id: orderResult.orderId,
+      status: orderResult.status,
+      state: 'open',
+      stop_loss: stopLoss,
+      take_profit: takeProfit,
+      risk_amount: bot.risk_per_trade || 0, // Store the risk amount directly
+      created_at: new Date().toISOString()
+    };
+    
+    // Only include realized_pnl and fees for test mode
+    if (bot.test_mode) {
+      tradeData.realized_pnl = realizedPnl;
+      tradeData.fees = fees;
+    }
+    
+    const { data: newTradeData, error: tradeError } = await supabase
       .from('trades')
-      .insert({
-        user_id: webhook.user_id,
-        bot_id: webhook.bot_id,
-        symbol: orderResult.symbol,
-        side: orderResult.side,
-        order_type: orderResult.orderType,
-        quantity: orderResult.qty,
-        price: orderResult.price,
-        order_id: orderResult.orderId,
-        status: orderResult.status,
-        realized_pnl: realizedPnl,
-        fees: fees,
-        state: 'open',
-        stop_loss: stopLoss,
-        take_profit: takeProfit,
-        risk_amount: bot.risk_per_trade || 0, // Store the risk amount directly
-        created_at: new Date().toISOString()
-      })
+      .insert(tradeData)
       .select('id')
       .single();
       
@@ -551,7 +560,7 @@ async function processOpenTrade(supabase, bot, webhook, alertData, apiKey, reque
       webhook.id,
       webhook.bot_id,
       webhook.user_id,
-      tradeData?.id
+      newTradeData?.id
     );
     
     console.log("Process completed successfully");
@@ -748,19 +757,6 @@ async function processCloseTrade(supabase, bot, webhook, alertData, apiKey, requ
         // Execute actual order on Bybit
         closeResult = await executeBybitOrder(orderParams);
         
-        // If the API doesn't return PnL, we calculate it
-        if (!realizedPnl) {
-          if (openTrade.side === 'Buy') {
-            realizedPnl = (closeResult.price - openTrade.price) * closeQuantity;
-          } else {
-            realizedPnl = (openTrade.price - closeResult.price) * closeQuantity;
-          }
-          
-          // Approximate fees (0.1% of the total trade value)
-          const fees = closeResult.price * closeResult.qty * 0.001;
-          realizedPnl -= fees;
-        }
-        
         await logEvent(
           supabase,
           'info',
@@ -942,18 +938,25 @@ async function processCloseTrade(supabase, bot, webhook, alertData, apiKey, requ
       openTrade.id
     );
   } else {
+    // Prepare update data object
+    const updateData = {
+      state: 'closed',
+      close_reason: closeReason,
+      exit_price: closeResult ? closeResult.price : alertData.price,
+      risk_amount: bot.risk_per_trade || 0, // Store the risk amount
+      trade_metrics: tradeMetrics,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Only include realized_pnl for test mode
+    if (bot.test_mode && realizedPnl !== null) {
+      updateData.realized_pnl = realizedPnl;
+    }
+    
     // For full closures, update all fields including state
     const { error: updateError } = await supabase
       .from('trades')
-      .update({
-        state: 'closed',
-        close_reason: closeReason,
-        realized_pnl: realizedPnl,
-        exit_price: closeResult ? closeResult.price : alertData.price,
-        risk_amount: bot.risk_per_trade || 0, // Store the risk amount
-        trade_metrics: tradeMetrics,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', openTrade.id);
     
     if (updateError) {
@@ -981,8 +984,8 @@ async function processCloseTrade(supabase, bot, webhook, alertData, apiKey, requ
     }
   }
   
-  // Update bot's profit/loss - do this for both full and partial closures
-  if (realizedPnl) {
+  // Update bot's profit/loss - do this for both full and partial closures (for test mode only)
+  if (realizedPnl !== null && bot.test_mode) {
     console.log(`Updating bot's profit/loss with: ${realizedPnl}`);
     const { error: botUpdateError } = await supabase
       .from('bots')
